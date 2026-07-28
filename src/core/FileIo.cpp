@@ -221,6 +221,20 @@ std::int64_t fileSize(const std::string& utf8Path) {
 #endif
 }
 
+std::int64_t fileModifiedTime(const std::string& utf8Path) {
+#ifdef _WIN32
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    if (!::GetFileAttributesExW(utf8ToWide(utf8Path).c_str(), GetFileExInfoStandard, &data))
+        return 0;
+    return (static_cast<std::int64_t>(data.ftLastWriteTime.dwHighDateTime) << 32)
+         | data.ftLastWriteTime.dwLowDateTime;
+#else
+    struct stat st{};
+    if (::stat(utf8Path.c_str(), &st) != 0) return 0;
+    return static_cast<std::int64_t>(st.st_mtime);
+#endif
+}
+
 bool createDirectories(const std::string& utf8Path) {
     if (utf8Path.empty()) return false;
     if (directoryExists(utf8Path)) return true;

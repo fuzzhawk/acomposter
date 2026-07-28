@@ -23,6 +23,9 @@ bool fileExists(const std::string& utf8Path);
 bool directoryExists(const std::string& utf8Path);
 bool createDirectories(const std::string& utf8Path);
 std::int64_t fileSize(const std::string& utf8Path);
+// Last-write time as an opaque monotonic stamp; only used to compare against a
+// previously recorded value (the plugin scan cache).
+std::int64_t fileModifiedTime(const std::string& utf8Path);
 
 // Non-recursive listing. `extensions` filters by lowercase suffix including the
 // dot (".wav"); an empty list matches everything.
