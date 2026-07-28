@@ -85,11 +85,30 @@ NodeId Graph::addNode(std::unique_ptr<Node> node) {
     node->setId(id);
 
     if (prepared_) {
-        PrepareInfo info{ sampleRate_, maxBlockSize_ };
+        PrepareInfo info{ sampleRate_, maxBlockSize_, clock_ };
         node->prepare(info);
     }
 
     nodes_.push_back(std::move(node));
+    rebuildSchedule();
+    return id;
+}
+
+NodeId Graph::addNodeWithId(std::unique_ptr<Node> node, NodeId id) {
+    if (!node || id == kInvalidNode) return kInvalidNode;
+    if (this->node(id) != nullptr) return kInvalidNode;
+    if (nodes_.size() >= static_cast<std::size_t>(kMaxNodes)) return kInvalidNode;
+
+    node->setId(id);
+
+    if (prepared_) {
+        PrepareInfo info{ sampleRate_, maxBlockSize_, clock_ };
+        node->prepare(info);
+    }
+
+    nodes_.push_back(std::move(node));
+    if (id >= nextNodeId_) nextNodeId_ = id + 1;
+
     rebuildSchedule();
     return id;
 }
@@ -447,7 +466,7 @@ void Graph::prepare(double sampleRate, int maxBlockSize) {
     maxBlockSize_ = clampValue(maxBlockSize, 16, kMaxBlockSize);
     prepared_ = true;
 
-    PrepareInfo info{ sampleRate_, maxBlockSize_ };
+    PrepareInfo info{ sampleRate_, maxBlockSize_, clock_ };
     for (auto& n : nodes_) n->prepare(info);
 
     rebuildSchedule();

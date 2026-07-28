@@ -147,6 +147,19 @@ public:
         increment_ = 0.0f;
     }
 
+    // Changes the ramp duration without disturbing a ramp in progress, so a
+    // node can expose its fade time as a live parameter.
+    void setRampSeconds(double seconds) noexcept {
+        if (seconds == rampSeconds_) return;
+        rampSeconds_ = seconds;
+        steps_ = static_cast<int>(rampSeconds_ * sampleRate_);
+        if (steps_ < 1) steps_ = 1;
+        if (countdown_ > 0) {
+            countdown_ = steps_;
+            increment_ = (target_ - current_) / static_cast<float>(steps_);
+        }
+    }
+
     void setCurrentAndTarget(float v) noexcept {
         current_ = target_ = v;
         countdown_ = 0;

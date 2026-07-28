@@ -10,6 +10,12 @@
 #include <string>
 #include <string_view>
 
+// Normally injected by the build. The fallback keeps the portable parts of the
+// tree compilable with a bare compiler invocation, which the tests rely on.
+#ifndef ACOMPOSTER_VERSION
+#  define ACOMPOSTER_VERSION "0.0.0-dev"
+#endif
+
 namespace acm {
 
 // ---------------------------------------------------------------------------

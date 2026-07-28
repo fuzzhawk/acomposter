@@ -10,6 +10,7 @@
 #include "../src/audio/AudioFile.h"
 #include "../src/core/Engine.h"
 #include "../src/core/Graph.h"
+#include "../src/core/Base64.h"
 #include "../src/core/Json.h"
 #include "../src/core/Parameter.h"
 #include "../src/core/Transport.h"
@@ -503,6 +504,306 @@ void testBypass() {
     CHECK(middle->callCount == 1);   // not called while bypassed
 }
 
+void testMetasurfaceInterpolation() {
+    TEST("metasurface interpolation");
+
+    registerBuiltinNodes();
+
+    BlockCounter clock{ 0 };
+    Engine engine;
+    engine.prepare(48000.0, 128, 2, 2);
+    Graph& graph = engine.graph();
+    (void)clock;
+
+    const NodeId fader = graph.addNode(NodeFactory::instance().create("crossfader"));
+    CHECK(fader != kInvalidNode);
+    Parameter* position = graph.node(fader)->findParameter("position");
+    Parameter* curve = graph.node(fader)->findParameter("curve");
+    CHECK(position != nullptr && curve != nullptr);
+
+    Metasurface surface;
+
+    position->setValue(0.0f);
+    curve->setValue(0.0f);   // constant power
+    const SnapshotId left = surface.capture(graph, "left", Point2{ 0.0f, 0.5f });
+
+    position->setValue(1.0f);
+    curve->setValue(1.0f);   // linear
+    const SnapshotId right = surface.capture(graph, "right", Point2{ 1.0f, 0.5f });
+
+    CHECK(surface.snapshotCount() == 2);
+    CHECK(surface.find(left) != nullptr && surface.find(right) != nullptr);
+
+    // Landing exactly on a snapshot must reproduce it, not merely approach it.
+    surface.applyAt(Point2{ 0.0f, 0.5f }, graph);
+    CHECK_CLOSE(position->value(), 0.0, 1e-5);
+    CHECK_CLOSE(curve->value(), 0.0, 1e-5);
+
+    surface.applyAt(Point2{ 1.0f, 0.5f }, graph);
+    CHECK_CLOSE(position->value(), 1.0, 1e-5);
+    CHECK_CLOSE(curve->value(), 1.0, 1e-5);
+
+    // Halfway between blends the continuous parameter...
+    surface.applyAt(Point2{ 0.5f, 0.5f }, graph);
+    CHECK_CLOSE(position->value(), 0.5, 1e-4);
+
+    // ...but the stepped one must land on a real choice, never between two.
+    const float curveValue = curve->value();
+    CHECK(curveValue == 0.0f || curveValue == 1.0f);
+
+    // Weights are a partition of unity everywhere on the surface.
+    std::vector<float> weights;
+    for (int i = 0; i <= 8; ++i) {
+        for (int j = 0; j <= 8; ++j) {
+            surface.computeWeights(Point2{ i / 8.0f, j / 8.0f }, weights);
+            CHECK(weights.size() == 2);
+            CHECK_CLOSE(weights[0] + weights[1], 1.0, 1e-4);
+            CHECK(weights[0] >= 0.0f && weights[1] >= 0.0f);
+        }
+    }
+
+    // Closer to the left snapshot means the left snapshot dominates.
+    surface.computeWeights(Point2{ 0.2f, 0.5f }, weights);
+    CHECK(weights[0] > weights[1]);
+
+    // Nearest mode is a hard switch.
+    surface.setMode(InterpolationMode::Nearest);
+    surface.applyAt(Point2{ 0.49f, 0.5f }, graph);
+    CHECK_CLOSE(position->value(), 0.0, 1e-5);
+    surface.applyAt(Point2{ 0.51f, 0.5f }, graph);
+    CHECK_CLOSE(position->value(), 1.0, 1e-5);
+
+    // Radial basis still sums to one, including far outside every radius.
+    surface.setMode(InterpolationMode::RadialBasis);
+    surface.setRadius(0.05f);
+    surface.computeWeights(Point2{ 0.5f, 1.0f }, weights);
+    CHECK_CLOSE(weights[0] + weights[1], 1.0, 1e-4);
+
+    // Excluding a parameter leaves it alone when the surface is applied.
+    surface.setMode(InterpolationMode::InverseDistance);
+    const ParamAddress positionAddress{ fader, graph.node(fader)->indexOfParameter("position") };
+    surface.setExcluded(positionAddress, true);
+    position->setValue(0.33f);
+    surface.applyAt(Point2{ 1.0f, 0.5f }, graph);
+    CHECK_CLOSE(position->value(), 0.33, 1e-5);
+
+    // Deleting the node prunes the dangling references.
+    surface.setExcluded(positionAddress, false);
+    graph.removeNode(fader);
+    surface.pruneMissing(graph);
+    CHECK(surface.snapshots()[0].values.empty());
+}
+
+void testMetasurfacePath() {
+    TEST("metasurface automation path");
+
+    Metasurface surface;
+    surface.beginPathRecording();
+    CHECK(surface.recordingPath());
+
+    surface.addPathPoint(Point2{ 0.0f, 0.0f }, 0.0);
+    surface.addPathPoint(Point2{ 1.0f, 0.0f }, 1.0);
+    surface.addPathPoint(Point2{ 1.0f, 1.0f }, 2.0);
+    surface.endPathRecording();
+
+    CHECK(!surface.recordingPath());
+    CHECK(surface.path().size() == 3);
+    CHECK_CLOSE(surface.pathDuration(), 2.0, 1e-9);
+
+    // Sampling interpolates between the recorded points.
+    Point2 midpoint = surface.samplePath(0.25);
+    CHECK_CLOSE(midpoint.x, 0.5, 1e-5);
+    CHECK_CLOSE(midpoint.y, 0.0, 1e-5);
+
+    midpoint = surface.samplePath(0.75);
+    CHECK_CLOSE(midpoint.x, 1.0, 1e-5);
+    CHECK_CLOSE(midpoint.y, 0.5, 1e-5);
+
+    // A phase past the end wraps rather than running off.
+    const Point2 wrapped = surface.samplePath(1.25);
+    CHECK_CLOSE(wrapped.x, 0.5, 1e-5);
+
+    // Synced playback follows the musical position, so two bars in at 8 beats
+    // per lap is exactly one full lap.
+    surface.setPathPlaying(true);
+    surface.setPathSynced(true);
+    surface.setPathBeats(8.0);
+    const Point2 atStart = surface.advancePath(0.0, 0.0);
+    CHECK_CLOSE(atStart.x, 0.0, 1e-5);
+    const Point2 afterLap = surface.advancePath(0.0, 8.0);
+    CHECK_CLOSE(afterLap.x, 0.0, 1e-5);
+    const Point2 halfLap = surface.advancePath(0.0, 4.0);
+    CHECK_CLOSE(halfLap.x, 1.0, 1e-5);
+}
+
+void testPatchRoundTrip() {
+    TEST("patch save and load round trip");
+
+    registerBuiltinNodes();
+
+    Engine engine;
+    engine.prepare(48000.0, 256, 2, 2);
+    Metasurface surface;
+    PatchViewState view;
+    PatchMetadata metadata;
+
+    patch::buildDefaultPatch(engine, surface);
+
+    const std::size_t originalNodes = engine.graph().nodeCount();
+    const std::size_t originalConnections = engine.graph().connections().size();
+    CHECK(originalNodes == 6);
+    CHECK(originalConnections == 6);
+    CHECK(surface.snapshotCount() == 2);
+
+    // Make the state distinctive so a lossy round trip would show up.
+    engine.transport().setBpm(174.0);
+    engine.transport().setTimeSignature(7, 8);
+    engine.setMasterGainDb(-4.5f);
+    view.zoom = 1.75f;
+    view.canvasX = -320.0f;
+    metadata.title = "night lab";
+    metadata.notes = "two decks, one surface";
+
+    NodeId faderId = kInvalidNode;
+    for (const auto& node : engine.graph().nodes())
+        if (node->typeName() == "crossfader") faderId = node->id();
+    CHECK(faderId != kInvalidNode);
+
+    engine.graph().node(faderId)->findParameter("position")->setValue(0.375f);
+    engine.graph().node(faderId)->setName("the fader");
+    engine.graph().node(faderId)->canvasX = 512.0f;
+    engine.graph().node(faderId)->comment = "left hand";
+
+    const JsonValue saved = patch::save(engine, surface, view, metadata);
+    const std::string text = saved.dump(2);
+    CHECK(text.size() > 200);
+
+    // Reload into a completely separate engine.
+    Engine reloaded;
+    reloaded.prepare(48000.0, 256, 2, 2);
+    Metasurface reloadedSurface;
+    PatchViewState reloadedView;
+    PatchMetadata reloadedMetadata;
+
+    std::string parseError;
+    const JsonValue parsed = JsonValue::parse(text, &parseError);
+    CHECK(parseError.empty());
+
+    const PatchLoadResult result =
+        patch::load(parsed, reloaded, reloadedSurface, reloadedView, reloadedMetadata);
+    CHECK(result.ok);
+    if (!result.ok) std::printf("        %s\n", result.error.c_str());
+    for (const std::string& warning : result.warnings)
+        std::printf("        warning: %s\n", warning.c_str());
+    CHECK(result.warnings.empty());
+
+    CHECK(reloaded.graph().nodeCount() == originalNodes);
+    CHECK(reloaded.graph().connections().size() == originalConnections);
+    CHECK_CLOSE(reloaded.transport().bpm(), 174.0, 1e-9);
+    CHECK(reloaded.transport().timeSigNumerator() == 7);
+    CHECK(reloaded.transport().timeSigDenominator() == 8);
+    CHECK_CLOSE(reloaded.masterGainDb(), -4.5, 1e-5);
+    CHECK_CLOSE(reloadedView.zoom, 1.75, 1e-6);
+    CHECK_CLOSE(reloadedView.canvasX, -320.0, 1e-6);
+    CHECK(reloadedMetadata.title == "night lab");
+    CHECK(reloadedMetadata.notes == "two decks, one surface");
+
+    // Node identity survives, which is what the snapshots depend on.
+    const Node* fader = reloaded.graph().node(faderId);
+    CHECK(fader != nullptr);
+    if (fader) {
+        CHECK(fader->typeName() == "crossfader");
+        CHECK(fader->name() == "the fader");
+        CHECK(fader->comment == "left hand");
+        CHECK_CLOSE(fader->canvasX, 512.0, 1e-6);
+        CHECK_CLOSE(fader->findParameter("position")->value(), 0.375, 1e-6);
+    }
+
+    CHECK(reloadedSurface.snapshotCount() == 2);
+    CHECK(reloadedSurface.snapshots()[0].name == "A");
+    CHECK(!reloadedSurface.snapshots()[0].values.empty());
+
+    // Saving the reload produces the same document: no drift across cycles.
+    // Checked before anything below mutates the reloaded patch.
+    const std::string second = patch::save(reloaded, reloadedSurface, reloadedView, reloadedMetadata).dump(2);
+    CHECK(second == text);
+
+    // Applying a reloaded snapshot must reach the same value it captured.
+    reloadedSurface.applyAt(reloadedSurface.snapshots()[1].position, reloaded.graph());
+    CHECK_CLOSE(reloaded.graph().node(faderId)->findParameter("position")->value(), 1.0, 1e-4);
+}
+
+void testPatchRejectsRubbish() {
+    TEST("patch loader rejects and degrades gracefully");
+
+    registerBuiltinNodes();
+
+    Engine engine;
+    engine.prepare(48000.0, 256, 2, 2);
+    Metasurface surface;
+    PatchViewState view;
+    PatchMetadata metadata;
+
+    // Not a patch at all.
+    JsonValue wrong = JsonValue::object();
+    wrong.set("format", "something-else");
+    CHECK(!patch::load(wrong, engine, surface, view, metadata).ok);
+
+    // A patch referring to a node type we do not have should still open, with
+    // the unknown node reported rather than silently swallowed.
+    JsonValue root = JsonValue::object();
+    root.set("format", patch::kFormatId);
+    root.set("version", 1);
+
+    JsonValue nodes = JsonValue::array();
+    JsonValue good = JsonValue::object();
+    good.set("id", 1);
+    good.set("type", "util.gain");
+    nodes.push(good);
+
+    JsonValue bad = JsonValue::object();
+    bad.set("id", 2);
+    bad.set("type", "vst2.something.we.do.not.have");
+    nodes.push(bad);
+    root.set("nodes", nodes);
+
+    JsonValue connections = JsonValue::array();
+    JsonValue dangling = JsonValue::object();
+    dangling.set("from", 1);
+    dangling.set("fromPort", 0);
+    dangling.set("to", 2);
+    dangling.set("toPort", 0);
+    connections.push(dangling);
+    root.set("connections", connections);
+
+    const PatchLoadResult result = patch::load(root, engine, surface, view, metadata);
+    CHECK(result.ok);
+    CHECK(engine.graph().nodeCount() == 1);
+    CHECK(engine.graph().connections().empty());
+    CHECK(result.warnings.size() == 2);
+}
+
+void testBase64() {
+    TEST("base64 round trip");
+
+    const char* cases[] = { "", "f", "fo", "foo", "foob", "fooba", "foobar" };
+    for (const char* text : cases) {
+        const std::string source(text);
+        const std::string encoded = base64Encode(source.data(), source.size());
+        const std::vector<std::uint8_t> decoded = base64Decode(encoded);
+        CHECK(std::string(decoded.begin(), decoded.end()) == source);
+    }
+
+    // Binary, including the bytes that would break a naive text round trip.
+    std::vector<std::uint8_t> binary;
+    for (int i = 0; i < 512; ++i) binary.push_back(static_cast<std::uint8_t>(i * 7 + i / 3));
+    const std::vector<std::uint8_t> decoded = base64Decode(base64Encode(binary));
+    CHECK(decoded == binary);
+
+    // Whitespace inside the encoded form is tolerated.
+    CHECK(base64Decode("Zm9v\n YmFy") == base64Decode("Zm9vYmFy"));
+}
+
 } // namespace
 
 int main() {
@@ -520,6 +821,11 @@ int main() {
     testGraphFeedback();
     testChannelAdaptation();
     testBypass();
+    testMetasurfaceInterpolation();
+    testMetasurfacePath();
+    testPatchRoundTrip();
+    testPatchRejectsRubbish();
+    testBase64();
 
     std::printf("----------------\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

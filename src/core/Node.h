@@ -7,6 +7,7 @@
 // strip for the sample player, an X/Y pad for the crossfader).
 #pragma once
 
+#include "AtomicResource.h"
 #include "AudioBuffer.h"
 #include "Json.h"
 #include "Parameter.h"
@@ -34,6 +35,11 @@ const char* toString(NodeCategory c) noexcept;
 struct PrepareInfo {
     double sampleRate = 48000.0;
     int maxBlockSize = 512;
+
+    // The engine's block counter. Nodes that hand large objects to the audio
+    // thread (a loaded sample, a plugin's state) need it to know when a retired
+    // object is safe to free. See AtomicResource.
+    const BlockCounter* blockCounter = nullptr;
 };
 
 // Everything a node needs for one render block. Buses point into graph-owned

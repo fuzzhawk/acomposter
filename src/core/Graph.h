@@ -94,6 +94,10 @@ public:
 
     // -- structure (message thread) ----------------------------------------
     NodeId addNode(std::unique_ptr<Node> node);
+    // Used by the patch loader to preserve the ids a saved file refers to, so
+    // connections and metasurface snapshots still point at the right things.
+    // Returns kInvalidNode if that id is already taken.
+    NodeId addNodeWithId(std::unique_ptr<Node> node, NodeId id);
     bool removeNode(NodeId id);
     void clear();
 
