@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-namespace acm::vst2 { class PluginManager; }
+namespace acm::vst2 { class PluginManager; struct PluginDescription; }
 
 namespace acm::ui {
 
@@ -60,6 +60,24 @@ public:
     void deleteSelection();
     void duplicateSelection();
     void bypassSelection();
+
+    // -- stem effect chains ------------------------------------------------
+    // Adds a plugin to the end of the chain hanging off one of a stem player's
+    // outputs, wiring it in so the performer never has to. Returns the new node,
+    // or kInvalidNode.
+    //
+    // The rack is made of ordinary nodes wired in series rather than plugin
+    // instances hidden inside the stem player. That is a deliberate choice: it
+    // reuses the whole VST host - editors, bridging, state, the scanner - and it
+    // means the colour engine's existing addressing reaches these plugins with
+    // no changes at all. The cost is that they are visible on the canvas, which
+    // for a patcher is arguably where they belong.
+    NodeId addToStemChain(NodeId stemPlayer, int stemSlot,
+                          const vst2::PluginDescription& description, bool forceBridge);
+    // Removes a node from a chain and closes the gap so the audio still flows.
+    bool removeFromChain(NodeId node);
+    // Lays a stem player's racks out in tidy rows to the right of it.
+    void tidyStemChains(NodeId stemPlayer);
 
     // Loads a sample into the player under the pointer, or makes a new player.
     // Used by both the file browser and Windows drag-and-drop.

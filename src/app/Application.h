@@ -75,6 +75,9 @@ private:
 
     // -- plugins -----------------------------------------------------------
     void addPluginNode(const vst2::PluginDescription& description, bool forceBridge);
+    // Opens the plugin list so the next choice lands on a stem's rack rather
+    // than on the canvas.
+    void beginStemEffectPick(NodeId stemPlayer, int slot);
     void togglePluginEditor(NodeId node);
     void closeAllPluginEditors();
 
@@ -111,6 +114,11 @@ private:
     ui::StatusBar statusBar_;
 
     ui::MainView activeView_ = ui::MainView::Patch;
+
+    // When set, the next plugin chosen in the manager is inserted into this
+    // stem's rack instead of being dropped on the canvas.
+    NodeId pendingChainPlayer_ = kInvalidNode;
+    int pendingChainSlot_ = -1;
 
     // -- document state ----------------------------------------------------
     PatchViewState patchView_;

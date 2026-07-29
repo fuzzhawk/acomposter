@@ -179,4 +179,25 @@ private:
     bool prepared_ = false;
 };
 
+
+// ---------------------------------------------------------------------------
+// Chain queries
+//
+// A "chain" here is what hangs off one output port in a straight line: the node
+// it feeds, the node that one feeds, and so on for as long as each is a simple
+// one-in one-out effect. It is how the stem player's per-stem effect racks are
+// discovered - they are ordinary nodes wired in series, not something hidden
+// inside the player, so everything that already understands nodes understands
+// them too.
+//
+// Stops at anything that fans out, sums, or loops back, because past that point
+// the audio is no longer only this stem's.
+// ---------------------------------------------------------------------------
+
+std::vector<NodeId> downstreamChain(const Graph& graph, NodeId node, PortIndex outputPort,
+                                    int maxDepth = 16);
+
+// Every chain hanging off every output of `node`, flattened.
+std::vector<NodeId> allDownstreamChains(const Graph& graph, NodeId node, int maxDepth = 16);
+
 } // namespace acm

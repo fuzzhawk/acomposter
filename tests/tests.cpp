@@ -1042,6 +1042,100 @@ void testStemSpectrum() {
     CHECK(b.high > b.low);
 }
 
+
+// ---------------------------------------------------------------------------
+// Stem effect racks
+// ---------------------------------------------------------------------------
+
+void testDownstreamChain() {
+    TEST("chain discovery follows a series and stops at a split");
+
+    registerBuiltinNodes();
+
+    BlockCounter clock{ 0 };
+    Graph graph;
+    graph.setClock(&clock);
+    graph.prepare(48000.0, 128);
+
+    const NodeId stems = graph.addNode(NodeFactory::instance().create("stem.player"));
+    const NodeId a = graph.addNode(NodeFactory::instance().create("util.gain"));
+    const NodeId b = graph.addNode(NodeFactory::instance().create("util.filter"));
+
+    graph.connect(stems, 0, a, 0);
+    graph.connect(a, 0, b, 0);
+
+    const std::vector<NodeId> chain = downstreamChain(graph, stems, 0);
+    CHECK(chain.size() == 2);
+    CHECK(chain[0] == a);
+    CHECK(chain[1] == b);
+
+    // A second stem with nothing on it has an empty chain, and chains do not
+    // leak across ports.
+    CHECK(downstreamChain(graph, stems, 1).empty());
+
+    // Splitting the tail ends the chain there: past a split the audio is no
+    // longer only this stem's.
+    const NodeId c = graph.addNode(NodeFactory::instance().create("util.gain"));
+    const NodeId d = graph.addNode(NodeFactory::instance().create("util.gain"));
+    graph.connect(b, 0, c, 0);
+    graph.connect(b, 0, d, 0);
+
+    const std::vector<NodeId> split = downstreamChain(graph, stems, 0);
+    CHECK(split.size() == 2);
+}
+
+void testChainStopsAtSummingNode() {
+    TEST("chain discovery stops where two sources meet");
+
+    registerBuiltinNodes();
+
+    BlockCounter clock{ 0 };
+    Graph graph;
+    graph.setClock(&clock);
+    graph.prepare(48000.0, 128);
+
+    const NodeId stems = graph.addNode(NodeFactory::instance().create("stem.player"));
+    const NodeId other = graph.addNode(NodeFactory::instance().create("util.tone"));
+    const NodeId shared = graph.addNode(NodeFactory::instance().create("util.gain"));
+
+    graph.connect(stems, 0, shared, 0);
+    graph.connect(other, 0, shared, 0);
+
+    // `shared` carries something other than this stem, so it is not part of
+    // this stem's rack and must not be adopted into a per-stem colour chain.
+    CHECK(downstreamChain(graph, stems, 0).empty());
+}
+
+void testColorAdoptsStemChains() {
+    TEST("colour engine links every stem rack in one go");
+
+    registerBuiltinNodes();
+
+    BlockCounter clock{ 0 };
+    Graph graph;
+    graph.setClock(&clock);
+    graph.prepare(48000.0, 128);
+
+    const NodeId stems = graph.addNode(NodeFactory::instance().create("stem.player"));
+
+    // A gain in the rack stands in for a plugin's neighbour: it is in the
+    // chain but is not a plugin, and must be left alone so a colour preset
+    // does not fight the mix.
+    const NodeId gain = graph.addNode(NodeFactory::instance().create("util.gain"));
+    graph.connect(stems, 0, gain, 0);
+
+    auto owner = std::make_unique<ColorNode>();
+    ColorNode* color = owner.get();
+    graph.addNode(std::move(owner));
+
+    int plugins = -1;
+    const int added = color->adoptStemChains(graph, &plugins);
+
+    CHECK(plugins == 0);
+    CHECK(added == 0);
+    CHECK(color->targets().empty());
+}
+
 void testColorNeutralIsUnchanged() {
     TEST("colour engine leaves the middle untouched");
 
@@ -1208,6 +1302,9 @@ int main() {
     testStemSectionPersistence();
     testStemTempoDetection();
     testStemSpectrum();
+    testDownstreamChain();
+    testChainStopsAtSummingNode();
+    testColorAdoptsStemChains();
     testColorNeutralIsUnchanged();
     testColorPresetRebinds();
     testColorPresetReportsMissing();

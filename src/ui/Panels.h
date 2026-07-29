@@ -69,6 +69,12 @@ public:
 
     // Raised when the plugin editor button in the inspector is pressed.
     std::function<void(NodeId)> onOpenPluginEditor;
+    // Asks the application to put a plugin on the end of a stem's rack. The
+    // application owns the plugin list and the wiring, so the inspector only
+    // has to say which stem.
+    std::function<void(NodeId stemPlayer, int slot)> onAddStemEffect;
+    std::function<void(NodeId)> onRemoveFromChain;
+    std::function<void(NodeId stemPlayer)> onTidyChains;
 
 private:
     void drawParameterList(Ui& ui, Rect area, Node& node);
@@ -77,6 +83,7 @@ private:
     // sections can be created, so it lives where there is room for it rather
     // than crammed into the node body.
     void drawStemSection(Ui& ui, Rect& area, Node& node);
+    void drawStemChains(Ui& ui, Rect& area, Node& node);
     void drawBuildSection(Ui& ui, Rect& area, Node& node);
     void drawColorSection(Ui& ui, Rect& area, Node& node);
 
@@ -90,6 +97,7 @@ private:
 
     // Which section row is open for editing, and its edit buffer.
     int editingSection_ = -1;
+    int expandedStem_ = -1;
     std::string sectionNameBuffer_;
 };
 

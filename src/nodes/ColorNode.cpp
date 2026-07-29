@@ -92,6 +92,30 @@ int ColorNode::adoptNode(NodeId nodeId, const Graph& graph) {
     return added;
 }
 
+int ColorNode::adoptStemChains(const Graph& graph, int* outPlugins) {
+    int added = 0;
+    int plugins = 0;
+
+    for (const auto& candidate : graph.nodes()) {
+        if (candidate->typeName() != "stem.player") continue;
+
+        for (NodeId inChain : allDownstreamChains(graph, candidate->id())) {
+            const Node* node = graph.node(inChain);
+            // Compared as a string rather than through VstNode::kTypeName:
+            // the colour node lives in core and the plugin host is a layer
+            // above it, so reaching for the symbol would drag the whole VST
+            // library into anything that links core - including the tests.
+            if (!node || node->typeName() != "vst2.plugin") continue;
+
+            ++plugins;
+            added += adoptNode(inChain, graph);
+        }
+    }
+
+    if (outPlugins) *outPlugins = plugins;
+    return added;
+}
+
 // ---------------------------------------------------------------------------
 // Capture
 // ---------------------------------------------------------------------------

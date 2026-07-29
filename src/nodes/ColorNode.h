@@ -86,6 +86,15 @@ public:
     // nothing moves until an end is captured.
     int adoptNode(NodeId node, const Graph& graph);
 
+    // Adopts every plugin hanging off every stem player's outputs, in one go.
+    // This is the auto-link: build the racks, press this, and the colour knob
+    // reaches every effect on every stem without a single target being picked
+    // by hand. Returns how many parameters were added.
+    //
+    // Only plugins - a gain or a filter in the rack is left alone, because a
+    // colour preset that also moved the stem's level would fight the mix.
+    int adoptStemChains(const Graph& graph, int* outPlugins = nullptr);
+
     // -- presets (message thread) ------------------------------------------
     // Presets store parameter *names*, not indices, and re-bind by matching
     // them against whatever the plugin reports now. Anything that does not match

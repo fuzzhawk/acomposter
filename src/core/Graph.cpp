@@ -585,4 +585,68 @@ void Graph::render(const TransportState& transport, int frames, std::uint64_t st
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Chain queries
+// ---------------------------------------------------------------------------
+
+std::vector<NodeId> downstreamChain(const Graph& graph, NodeId node, PortIndex outputPort,
+                                    int maxDepth) {
+    std::vector<NodeId> chain;
+
+    NodeId current = node;
+    PortIndex port = outputPort;
+
+    for (int depth = 0; depth < maxDepth; ++depth) {
+        // Exactly one consumer, or this is the end of the line. A port feeding
+        // two places is a split, and what happens after it is not this stem's
+        // alone - adopting it into a per-stem colour chain would be wrong.
+        NodeId next = kInvalidNode;
+        int consumers = 0;
+
+        for (const Connection& c : graph.connections()) {
+            if (c.sourceNode != current || c.sourcePort != port) continue;
+            ++consumers;
+            next = c.destNode;
+        }
+        if (consumers != 1 || next == kInvalidNode) break;
+
+        // Already seen: a feedback loop. Legal in a patch, but not a chain.
+        if (std::find(chain.begin(), chain.end(), next) != chain.end()) break;
+        if (next == node) break;
+
+        const Node* nextNode = graph.node(next);
+        if (!nextNode) break;
+
+        // Anything that sums several sources is a mixer, not a link in one
+        // stem's chain.
+        int feeders = 0;
+        for (const Connection& c : graph.connections())
+            if (c.destNode == next) ++feeders;
+        if (feeders != 1) break;
+
+        chain.push_back(next);
+
+        if (nextNode->numOutputs() < 1) break;
+        current = next;
+        port = 0;
+    }
+
+    return chain;
+}
+
+std::vector<NodeId> allDownstreamChains(const Graph& graph, NodeId node, int maxDepth) {
+    std::vector<NodeId> all;
+
+    const Node* source = graph.node(node);
+    if (!source) return all;
+
+    for (int port = 0; port < source->numOutputs(); ++port) {
+        for (NodeId id : downstreamChain(graph, node, port, maxDepth)) {
+            if (std::find(all.begin(), all.end(), id) == all.end()) all.push_back(id);
+        }
+    }
+    return all;
+}
+
 } // namespace acm

@@ -129,6 +129,21 @@ snaps to a section instead of trying to average two.
 
 Eight stems, sixteen sections, one stereo output per stem plus a summed pair.
 
+### Per-stem effect racks
+
+Each stem output can carry its own chain of plugins, built from the inspector:
+press the + beside a stem, pick a plugin, and it is created, placed and wired
+into the end of that stem's chain. Removing one closes the gap so the audio
+keeps flowing. "tidy" lays every rack out in rows beside the player.
+
+The racks are ordinary nodes wired in series rather than plugin instances
+hidden inside the stem player. That is deliberate. It reuses the whole VST host
+- editors, 32-bit bridging, state, the scanner - and it means the colour
+engine's existing addressing reaches these plugins with no changes at all. They
+are visible on the canvas, which for a patcher is arguably where they belong,
+and you can still re-patch them by hand if a song wants something the automatic
+wiring would not do.
+
 ### Colour
 
 One knob that moves a whole effect chain between two captured states, through an
@@ -140,9 +155,10 @@ a colour of zero is audibly unchanged whatever the ends are - which is what make
 the knob safe to leave alone mid-set - and an asymmetric preset still passes
 through the sound the track actually has.
 
-It drives plugins rather than containing them. Point it at a chain, adopt the
-parameters you care about, dial each end by ear and press "set red" or "set
-blue". Targets are discovered from whatever the plugin reports and presets
+It drives plugins rather than containing them. **link every stem rack** adopts
+every plugin hanging off every stem player in one press - build the racks, press
+it, and the knob reaches the whole set. Or point it at one node at a time. Then
+dial each end by ear and press "set red" or "set blue". Targets are discovered from whatever the plugin reports and presets
 re-bind by name, reporting what they could not find rather than pointing at the
 wrong control.
 
@@ -302,7 +318,7 @@ Version 0.1.3. Everything described above is implemented, and the binaries build
 clean under both MSVC and mingw-w64 with warnings as errors.
 
 The engine, codecs, metasurface, patch format, section launching and colour
-interpolation are covered by 496 checks that run on the build host. The interface, the patcher, the file browser, drag and
+interpolation are covered by 513 checks that run on the build host. The interface, the patcher, the file browser, drag and
 drop, and VST2 scanning and instantiation have been driven end to end against
 the real binary. WASAPI has been exercised on hardware.
 

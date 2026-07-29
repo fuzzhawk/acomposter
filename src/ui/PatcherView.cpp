@@ -383,6 +383,127 @@ void PatcherView::bypassSelection() {
         if (Node* node = engine_->graph().node(id)) node->setBypassed(anyActive);
 }
 
+
+// ---------------------------------------------------------------------------
+// Stem effect chains
+// ---------------------------------------------------------------------------
+
+NodeId PatcherView::addToStemChain(NodeId stemPlayer, int stemSlot,
+                                   const vst2::PluginDescription& description,
+                                   bool forceBridge) {
+    if (!engine_) return kInvalidNode;
+
+    Graph& graph = engine_->graph();
+    Node* player = graph.node(stemPlayer);
+    if (!player || stemSlot < 0 || stemSlot >= player->numOutputs()) return kInvalidNode;
+
+    // Where the chain currently ends, and what it currently feeds.
+    const std::vector<NodeId> chain = downstreamChain(graph, stemPlayer, stemSlot);
+
+    NodeId tailNode = stemPlayer;
+    PortIndex tailPort = static_cast<PortIndex>(stemSlot);
+    if (!chain.empty()) {
+        tailNode = chain.back();
+        tailPort = 0;
+    }
+
+    // Whatever the tail feeds now has to end up fed by the new plugin instead,
+    // so inserting into a rack that is already going somewhere does not silence
+    // it.
+    std::vector<Connection> downstream;
+    for (const Connection& c : graph.connections())
+        if (c.sourceNode == tailNode && c.sourcePort == tailPort) downstream.push_back(c);
+
+    auto node = std::make_unique<vst2::VstNode>(description);
+    std::string error;
+    const bool loaded = node->loadPlugin(*plugins_, engine_->stats().sampleRate,
+                                         std::max(64, engine_->stats().blockSize),
+                                         forceBridge, &error);
+
+    const Node* playerNode = graph.node(stemPlayer);
+    const float row = playerNode ? playerNode->canvasY + static_cast<float>(stemSlot) * 130.0f
+                                 : 0.0f;
+    const float column = playerNode
+        ? playerNode->canvasX + nodeWidth(*playerNode) + 40.0f
+          + static_cast<float>(chain.size()) * 250.0f
+        : 0.0f;
+
+    node->canvasX = column;
+    node->canvasY = row;
+
+    const NodeId added = graph.addNode(std::move(node));
+    if (added == kInvalidNode) return kInvalidNode;
+
+    if (!loaded) {
+        if (Node* placed = graph.node(added)) placed->setErrorText(error);
+    }
+
+    for (const Connection& c : downstream) graph.disconnect(c.id);
+
+    graph.connect(tailNode, tailPort, added, 0);
+    for (const Connection& c : downstream) graph.connect(added, 0, c.destNode, c.destPort);
+
+    selection_.clear();
+    selection_.push_back(added);
+    return added;
+}
+
+bool PatcherView::removeFromChain(NodeId nodeId) {
+    if (!engine_) return false;
+
+    Graph& graph = engine_->graph();
+    const Node* node = graph.node(nodeId);
+    if (!node) return false;
+
+    // Remember what fed it and what it fed, so the gap can be closed.
+    NodeId upstreamNode = kInvalidNode;
+    PortIndex upstreamPort = 0;
+    std::vector<Connection> downstream;
+
+    for (const Connection& c : graph.connections()) {
+        if (c.destNode == nodeId && c.destPort == 0) {
+            upstreamNode = c.sourceNode;
+            upstreamPort = c.sourcePort;
+        }
+        if (c.sourceNode == nodeId && c.sourcePort == 0) downstream.push_back(c);
+    }
+
+    // A plugin's editor has to go before the plugin does.
+    if (auto* plugin = dynamic_cast<vst2::VstNode*>(graph.node(nodeId))) plugin->closeEditor();
+
+    if (!graph.removeNode(nodeId)) return false;
+
+    if (upstreamNode != kInvalidNode) {
+        for (const Connection& c : downstream)
+            graph.connect(upstreamNode, upstreamPort, c.destNode, c.destPort);
+    }
+
+    selection_.erase(std::remove(selection_.begin(), selection_.end(), nodeId), selection_.end());
+    return true;
+}
+
+void PatcherView::tidyStemChains(NodeId stemPlayer) {
+    if (!engine_) return;
+
+    Graph& graph = engine_->graph();
+    const Node* player = graph.node(stemPlayer);
+    if (!player) return;
+
+    const float left = player->canvasX + nodeWidth(*player) + 40.0f;
+
+    for (int slot = 0; slot < player->numOutputs(); ++slot) {
+        const std::vector<NodeId> chain =
+            downstreamChain(graph, stemPlayer, static_cast<PortIndex>(slot));
+
+        for (std::size_t i = 0; i < chain.size(); ++i) {
+            if (Node* node = graph.node(chain[i])) {
+                node->canvasX = left + static_cast<float>(i) * 250.0f;
+                node->canvasY = player->canvasY + static_cast<float>(slot) * 130.0f;
+            }
+        }
+    }
+}
+
 bool PatcherView::handleFileDrop(const std::string& utf8Path, Vec2 screenPosition,
                                  const Rect& bounds) {
     if (!engine_ || !audiofile::isSupportedFile(utf8Path)) return false;

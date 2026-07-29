@@ -95,6 +95,16 @@ bool Application::initialise() {
     };
 
     inspector_.onOpenPluginEditor = [this](NodeId node) { togglePluginEditor(node); };
+    inspector_.onAddStemEffect = [this](NodeId player, int slot) {
+        beginStemEffectPick(player, slot);
+    };
+    inspector_.onRemoveFromChain = [this](NodeId node) {
+        if (patcher_.removeFromChain(node)) markModified();
+    };
+    inspector_.onTidyChains = [this](NodeId player) {
+        patcher_.tidyStemChains(player);
+        markModified();
+    };
 
     pluginView_.onAddPlugin = [this](const vst2::PluginDescription& description, bool forceBridge) {
         addPluginNode(description, forceBridge);
@@ -610,7 +620,41 @@ bool Application::confirmDiscardChanges() {
 // Plugins
 // ---------------------------------------------------------------------------
 
+void Application::beginStemEffectPick(NodeId stemPlayer, int slot) {
+    pendingChainPlayer_ = stemPlayer;
+    pendingChainSlot_ = slot;
+
+    activeView_ = ui::MainView::Plugins;
+    ui_.notify("pick a plugin - it will be added to that stem's rack",
+               ui::theme().accent, 5.0f);
+}
+
 void Application::addPluginNode(const vst2::PluginDescription& description, bool forceBridge) {
+    // A pick that was started from a stem's rack goes there instead of onto the
+    // canvas, wired in at the end of whatever is already on that stem.
+    if (pendingChainPlayer_ != kInvalidNode && pendingChainSlot_ >= 0) {
+        const NodeId player = pendingChainPlayer_;
+        const int slot = pendingChainSlot_;
+        pendingChainPlayer_ = kInvalidNode;
+        pendingChainSlot_ = -1;
+
+        const NodeId added = patcher_.addToStemChain(player, slot, description, forceBridge);
+        activeView_ = ui::MainView::Patch;
+
+        if (added != kInvalidNode) {
+            markModified();
+            const Node* node = engine_.graph().node(added);
+            const bool failed = node && !node->errorText().empty();
+            ui_.notify(failed ? description.name + ": " + node->errorText()
+                              : "added " + description.name + " to the rack",
+                       failed ? ui::theme().danger : ui::theme().accent, failed ? 8.0f : 2.5f);
+        } else {
+            ui_.notify("could not add " + description.name + " to that rack",
+                       ui::theme().danger, 6.0f);
+        }
+        return;
+    }
+
     auto node = std::make_unique<vst2::VstNode>(description);
 
     std::string error;

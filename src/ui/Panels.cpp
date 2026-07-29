@@ -360,6 +360,88 @@ void InspectorView::drawParameterList(Ui& ui, Rect area, Node& node) {
 }
 
 
+
+// The per-stem effect racks. Ordinary nodes wired in series off each stem
+// output, listed here so they can be built and torn down without touching the
+// canvas - which is the whole point of the feature.
+void InspectorView::drawStemChains(Ui& ui, Rect& area, Node& node) {
+    auto* stems = dynamic_cast<StemPlayerNode*>(&node);
+    if (!stems || !engine_) return;
+
+    const Theme& t = theme();
+    const Graph& graph = engine_->graph();
+
+    ui.separator(area.removeFromTop(9.0f));
+    Rect header = area.removeFromTop(18.0f);
+    ui.label(header.removeFromLeft(90.0f), "effect racks", t.textDim, t.fontUiBold);
+
+    if (ui.button(ui.id("inspector.chains.tidy"), header.removeFromRight(46.0f), "tidy",
+                  Ui::ButtonStyle::Normal) && onTidyChains)
+        onTidyChains(node.id());
+    if (ui.isHot(ui.id("inspector.chains.tidy")))
+        ui.setTooltip("Lay the racks out in rows beside the stem player");
+
+    area.removeFromTop(3.0f);
+
+    for (int slot = 0; slot < kMaxStems; ++slot) {
+        if (area.height < 44.0f) break;
+
+        const std::vector<NodeId> chain =
+            downstreamChain(graph, node.id(), static_cast<PortIndex>(slot));
+
+        Rect row = area.removeFromTop(18.0f);
+
+        const Rect addArea = row.removeFromRight(20.0f);
+        if (ui.iconButton(ui.idFrom(&node, 1000 + slot), addArea, Ui::Icon::Plus, t.accent)
+            && onAddStemEffect)
+            onAddStemEffect(node.id(), slot);
+        if (ui.isHot(ui.idFrom(&node, 1000 + slot)))
+            ui.setTooltip("Add an effect to the end of this stem's rack");
+
+        const bool expanded = expandedStem_ == slot;
+        bool hovered = false, held = false;
+        if (ui.buttonBehaviour(ui.idFrom(&node, 1040 + slot), row, hovered, held))
+            expandedStem_ = expanded ? -1 : slot;
+        if (hovered) ui.draw().addRectFilled(row, t.widgetHover, t.cornerRadius);
+
+        char label[128];
+        std::snprintf(label, sizeof(label), "%s  -  %d effect%s",
+                      stems->stemName(slot).c_str(), static_cast<int>(chain.size()),
+                      chain.size() == 1 ? "" : "s");
+        ui.draw().addTextClipped(ui.font(t.fontSmall), row,
+                                 chain.empty() ? t.textFaint : t.textDim, label);
+
+        if (!expanded) continue;
+
+        for (NodeId inChain : chain) {
+            if (area.height < 26.0f) break;
+            const Node* effect = graph.node(inChain);
+            if (!effect) continue;
+
+            Rect effectRow = area.removeFromTop(17.0f);
+            effectRow.removeFromLeft(14.0f);
+
+            const Rect removeArea = effectRow.removeFromRight(18.0f);
+            if (ui.iconButton(ui.idFrom(effect, 1080), removeArea, Ui::Icon::Cross, t.textFaint)
+                && onRemoveFromChain) {
+                onRemoveFromChain(inChain);
+                break;
+            }
+
+            const Rect editArea = effectRow.removeFromRight(20.0f);
+            if (ui.iconButton(ui.idFrom(effect, 1120), editArea, Ui::Icon::Grid, t.textDim)
+                && onOpenPluginEditor)
+                onOpenPluginEditor(inChain);
+
+            ui.draw().addTextClipped(ui.font(t.fontSmall), effectRow,
+                                     effect->errorText().empty() ? t.textDim : t.danger,
+                                     effect->name());
+        }
+
+        area.removeFromTop(2.0f);
+    }
+}
+
 void InspectorView::drawStemSection(Ui& ui, Rect& area, Node& node) {
     auto* stems = dynamic_cast<StemPlayerNode*>(&node);
     if (!stems) return;
@@ -468,6 +550,26 @@ void InspectorView::drawColorSection(Ui& ui, Rect& area, Node& node) {
     char count[48];
     std::snprintf(count, sizeof(count), "%d", static_cast<int>(color->targets().size()));
     ui.label(header, count, t.textFaint, t.fontSmall, DrawList::Align::Right);
+
+    area.removeFromTop(3.0f);
+
+    // One press wires the colour knob to every plugin on every stem. Building
+    // the racks is the work; this is meant to be the part that is not.
+    Rect autoRow = area.removeFromTop(20.0f);
+    if (ui.button(ui.id("inspector.color.autolink"), autoRow, "link every stem rack",
+                  Ui::ButtonStyle::Primary)) {
+        int plugins = 0;
+        const int added = color->adoptStemChains(engine_->graph(), &plugins);
+        if (plugins == 0) {
+            ui.notify("no plugins found on any stem rack", t.danger, 4.0f);
+        } else {
+            ui.notify("linked " + std::to_string(plugins) + " plugins, "
+                          + std::to_string(added) + " parameters",
+                      t.accent, 3.0f);
+        }
+    }
+    if (ui.isHot(ui.id("inspector.color.autolink")))
+        ui.setTooltip("Adopt every plugin hanging off every stem player's outputs");
 
     area.removeFromTop(3.0f);
 
@@ -636,6 +738,7 @@ void InspectorView::render(Ui& ui, const Rect& bounds, NodeId nodeId) {
 
     drawPluginSection(ui, area, *node);
     drawStemSection(ui, area, *node);
+    drawStemChains(ui, area, *node);
     drawColorSection(ui, area, *node);
     drawBuildSection(ui, area, *node);
 
