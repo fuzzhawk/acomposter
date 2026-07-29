@@ -66,6 +66,22 @@ public:
     // Silences the graph and resets every node. Bound to a panic key.
     void panic() noexcept { panicRequested_.store(true, std::memory_order_release); }
 
+    // -- output identification ---------------------------------------------
+    // Walks a tone across the device's physical outputs, one at a time, so it
+    // is possible to find out which socket is which without patching anything.
+    // Written after the master interleave, so it is heard whatever the graph is
+    // doing and is unaffected by the master gain or mute.
+    void startOutputTest(int firstChannel, int channelCount) noexcept;
+    void stopOutputTest() noexcept { outputTestActive_.store(false, std::memory_order_release); }
+    bool outputTestRunning() const noexcept {
+        return outputTestActive_.load(std::memory_order_acquire);
+    }
+    // Which physical output is sounding, or -1. For the settings readout.
+    int outputTestChannel() const noexcept {
+        return outputTestActive_.load(std::memory_order_acquire)
+            ? outputTestChannel_.load(std::memory_order_relaxed) : -1;
+    }
+
     // -- housekeeping ------------------------------------------------------
     const BlockCounter& blockCounter() const noexcept { return blockCounter_; }
     EngineStats stats() const noexcept;
@@ -99,6 +115,17 @@ private:
     std::atomic<int> lastBlockSize_{ 0 };
 
     SmoothedValue masterSmoothing_;
+
+    // -- output test -------------------------------------------------------
+    void renderOutputTest(float* output, int outputChannels, int frames) noexcept;
+
+    std::atomic<bool> outputTestActive_{ false };
+    std::atomic<int> outputTestFirst_{ 0 };
+    std::atomic<int> outputTestCount_{ 0 };
+    std::atomic<int> outputTestChannel_{ -1 };
+    // Audio-thread only, so plain values.
+    double outputTestPhase_ = 0.0;
+    std::int64_t outputTestFrame_ = 0;
 
     double sampleRate_ = 48000.0;
     int maxBlockSize_ = 512;

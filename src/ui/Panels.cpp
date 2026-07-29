@@ -651,6 +651,11 @@ void SettingsView::initialise(Engine* engine, platform::AudioDeviceSettings* set
     settings_ = settings;
 }
 
+void SettingsView::close() {
+    visible_ = false;
+    if (engine_) engine_->stopOutputTest();
+}
+
 void SettingsView::open() {
     visible_ = true;
     justOpened_ = true;
@@ -706,7 +711,7 @@ bool SettingsView::render(Ui& ui, const Rect& bounds, const platform::AudioDevic
     list.addRectFilled(bounds, Colour{ 0.0f, 0.0f, 0.0f, 0.55f });
 
     const float width = std::min(t.scaled(520.0f), bounds.width - t.scaled(40.0f));
-    const float height = std::min(t.scaled(460.0f), bounds.height - t.scaled(40.0f));
+    const float height = std::min(t.scaled(516.0f), bounds.height - t.scaled(40.0f));
     const Rect sheet{ bounds.centre().x - width * 0.5f, bounds.centre().y - height * 0.5f,
                       width, height };
 
@@ -818,7 +823,24 @@ bool SettingsView::render(Ui& ui, const Rect& bounds, const platform::AudioDevic
     {
         // Channel count and first channel: the pair that decides where a stereo
         // patch lands on a multi-output interface.
-        const int deviceChannels = std::max(2, status.deviceOutputChannels);
+        //
+        // Taken from the device the user has *selected*, not the one currently
+        // running. Reading it from the live status meant a 20-output interface
+        // still offered two channels until after it had been applied - and
+        // applying is exactly what you cannot judge without setting the routing
+        // first. Enumeration reports the count for every device, so use it, and
+        // fall back to the running device only when it does not.
+        int deviceChannels = 0;
+        for (const platform::AudioDeviceInfo& device : outputDevices_) {
+            const bool isSelected = device.id == draft_.outputDeviceId
+                                 || (draft_.outputDeviceId.empty() && device.isDefault);
+            if (isSelected && device.outputChannels > 0) {
+                deviceChannels = device.outputChannels;
+                break;
+            }
+        }
+        if (deviceChannels <= 0) deviceChannels = status.deviceOutputChannels;
+        deviceChannels = std::max(2, deviceChannels);
 
         Rect row = labelled(area, "channels");
         const Rect countArea = row.removeFromLeft(row.width * 0.46f);
@@ -854,6 +876,44 @@ bool SettingsView::render(Ui& ui, const Rect& bounds, const platform::AudioDevic
         }
         if (ui.isHot(ui.id("settings.outoffset")))
             ui.setTooltip("Which of the device's outputs the master bus is sent to");
+
+        // -- identify ------------------------------------------------------
+        // Walks a blip across the chosen outputs. Knowing which socket is which
+        // is the whole reason for setting an offset, and on a twenty-output
+        // interface it is not something you can work out by reading a manual.
+        Rect testRow = labelled(area, "identify");
+        const Rect testButton = testRow.removeFromLeft(t.scaled(110.0f));
+        testRow.removeFromLeft(t.scaled(10.0f));
+
+        const bool testing = engine_ && engine_->outputTestRunning();
+        if (ui.button(ui.id("settings.outtest"), testButton, testing ? "stop" : "test outputs",
+                      testing ? Ui::ButtonStyle::Danger : Ui::ButtonStyle::Normal,
+                      false, engine_ != nullptr && status.running)) {
+            if (testing) engine_->stopOutputTest();
+            // The applied routing, not the draft: the tone goes to the device
+            // that is actually open, and saying otherwise would be a lie about
+            // which socket is about to make a noise.
+            else engine_->startOutputTest(settings_->outputChannelOffset,
+                                          status.outputChannels > 0 ? status.outputChannels
+                                                                    : busChannels);
+        }
+
+        if (!status.running) {
+            ui.draw().addTextClipped(ui.font(t.fontSmall), testRow, t.textFaint,
+                                     "starts once a device is open");
+        } else if (testing) {
+            char text[96];
+            std::snprintf(text, sizeof(text), "sounding output %d",
+                          engine_->outputTestChannel() + 1);
+            ui.draw().addTextClipped(ui.font(t.fontSmall), testRow, t.accent, text);
+        } else {
+            char text[128];
+            std::snprintf(text, sizeof(text), "a blip on each of outputs %d-%d, in turn",
+                          settings_->outputChannelOffset + 1,
+                          settings_->outputChannelOffset
+                              + (status.outputChannels > 0 ? status.outputChannels : busChannels));
+            ui.draw().addTextClipped(ui.font(t.fontSmall), testRow, t.textFaint, text);
+        }
     }
 
     area.removeFromTop(t.scaled(4.0f));

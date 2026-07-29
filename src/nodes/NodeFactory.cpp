@@ -1,10 +1,13 @@
 #include "NodeFactory.h"
 
+#include "BuildNode.h"
+#include "ColorNode.h"
 #include "CrossfaderNode.h"
 #include "IoNodes.h"
 #include "LooperNode.h"
 #include "MixerNode.h"
 #include "SamplePlayerNode.h"
+#include "StemPlayerNode.h"
 #include "UtilityNodes.h"
 
 #include <algorithm>
@@ -71,6 +74,12 @@ void registerBuiltinNodes() {
         NodeCategory::Source, "Sources", 10,
         [] { return std::make_unique<SamplePlayerNode>(); });
 
+    add("stem.player", "Stem Player",
+        "Plays a song's stems together and loops a named section of it, switching "
+        "sections on the grid.",
+        NodeCategory::Source, "Sources", 15,
+        [] { return std::make_unique<StemPlayerNode>(); });
+
     add("looper", "Looper",
         "Records a live loop and layers overdubs onto it.",
         NodeCategory::Source, "Sources", 20,
@@ -85,6 +94,22 @@ void registerBuiltinNodes() {
         "Brings the capture stream from the audio device into the patch.",
         NodeCategory::Source, "Sources", 40,
         [] { return std::make_unique<AudioInNode>(); });
+
+    // -- controllers -------------------------------------------------------
+    // These drive other nodes' parameters rather than carrying audio, which is
+    // why they sit in their own palette group instead of among the effects.
+
+    add("color", "Colour",
+        "Moves a whole effect chain between two captured states with one knob, "
+        "through an untouched middle.",
+        NodeCategory::Effect, "Controllers", 10,
+        [] { return std::make_unique<ColorNode>(); });
+
+    add("build", "Build",
+        "A momentary switch that stutters the loop, runs a riser and pushes the "
+        "colour, then drops back on the grid.",
+        NodeCategory::Effect, "Controllers", 20,
+        [] { return std::make_unique<BuildNode>(); });
 
     // -- mixing ------------------------------------------------------------
 

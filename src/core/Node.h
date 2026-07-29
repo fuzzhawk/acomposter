@@ -20,6 +20,8 @@
 
 namespace acm {
 
+class Graph;
+
 // Drives the accent colour and the palette grouping in the UI.
 enum class NodeCategory : std::uint8_t {
     Source,     // sample player, oscillators, live input
@@ -127,6 +129,12 @@ public:
     // Called once per UI frame on the message thread. Somewhere for nodes to do
     // deferred work: retire old buffers, pump a plugin's message loop.
     virtual void serviceFromMessageThread() {}
+
+    // Handed to every node as it joins a graph. Almost nothing needs it - a node
+    // that reads its neighbours is usually a design mistake - but the controller
+    // nodes exist precisely to write other nodes' parameters, and they have to
+    // reach them somehow. Null when the node is not in a graph.
+    virtual void setOwningGraph(Graph* graph) { (void)graph; }
 
     // -- persistence -------------------------------------------------------
     // Parameters are saved by the patch writer automatically. Override these for

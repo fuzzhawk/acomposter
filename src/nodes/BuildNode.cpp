@@ -1,0 +1,313 @@
+#include "BuildNode.h"
+
+#include "../audio/AudioFile.h"
+#include "../core/Graph.h"
+#include "ColorNode.h"
+#include "StemPlayerNode.h"
+
+#include <algorithm>
+#include <cmath>
+
+namespace acm {
+namespace {
+
+// The divide choices the stem player offers, as indices into its parameter.
+constexpr int kDivideChoiceCount = 6;   // 1, 2, 4, 8, 16, 32
+
+} // namespace
+
+BuildNode::BuildNode() : Node("build", NodeCategory::Effect) {
+    addOutput("riser", 2);
+
+    pEngage_ = indexOfParameter(addBoolParam(kEngageParam, "Engage", false).id());
+    // Not captured by the metasurface: a build is a thing you do, not a place
+    // you are, and having it come back on when a snapshot recalls would be a
+    // nasty surprise mid-set.
+    parameter(pEngage_).setAutomatable(true).setBlend(ParamBlend::Stepped);
+
+    pBars_ = indexOfParameter(addIntParam("bars", "Build Length", 1, 32, 8).id());
+    parameter(pBars_).setUnit("bars");
+
+    pCurve_ = indexOfParameter(
+        addChoiceParam("curve", "Curve", { "linear", "accelerating", "16ths" }, 1)
+            .setBlend(ParamBlend::Stepped).id());
+
+    pRelease_ = indexOfParameter(
+        addChoiceParam("release", "Release", { "next bar", "next beat", "immediate" }, 0)
+            .setBlend(ParamBlend::Stepped).id());
+
+    pStartDivide_ = indexOfParameter(
+        addChoiceParam("startDivide", "From", { "1", "2", "4", "8", "16", "32" }, 0)
+            .setBlend(ParamBlend::Stepped).id());
+    pEndDivide_ = indexOfParameter(
+        addChoiceParam("endDivide", "To", { "1", "2", "4", "8", "16", "32" }, 4)
+            .setBlend(ParamBlend::Stepped).id());
+
+    pColorPush_ = indexOfParameter(addFloatParam("colorPush", "Colour Push", -1.0f, 1.0f, 1.0f).id());
+    pRiserGain_ = indexOfParameter(addDbParam("riserGain", "Riser", -60.0f, 12.0f, -6.0f).id());
+    pKillLow_ = indexOfParameter(addBoolParam("killLow", "Drop the Low End", true).id());
+}
+
+// ---------------------------------------------------------------------------
+// Riser
+// ---------------------------------------------------------------------------
+
+bool BuildNode::loadRiser(const std::string& utf8Path, std::string* error) {
+    std::string loadError;
+    std::shared_ptr<SampleBuffer> buffer = audiofile::load(utf8Path, &loadError);
+    if (!buffer) {
+        if (error) *error = loadError;
+        setErrorText(loadError);
+        return false;
+    }
+
+    riser_.publish(std::move(buffer));
+    riserPath_ = utf8Path;
+    setErrorText({});
+    return true;
+}
+
+void BuildNode::clearRiser() {
+    riser_.clear();
+    riserPath_.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Performance
+// ---------------------------------------------------------------------------
+
+void BuildNode::setEngaged(bool engage) noexcept {
+    if (pEngage_ >= 0) parameter(pEngage_).setValue(engage ? 1.0f : 0.0f);
+}
+
+void BuildNode::prepare(const PrepareInfo& info) {
+    Node::prepare(info);
+    riser_.setClock(info.blockCounter);
+    riserGain_.reset(info.sampleRate, 0.01);
+    reset();
+}
+
+void BuildNode::reset() {
+    running_ = false;
+    riserPlaying_ = false;
+    riserPosition_ = 0.0;
+    releasePending_ = false;
+    startPpq_ = 0.0;
+    progress_.store(0.0f, std::memory_order_relaxed);
+    publishedRunning_.store(false, std::memory_order_relaxed);
+}
+
+void BuildNode::process(ProcessContext& ctx) {
+    ctx.clearOutputs();
+
+    const int frames = ctx.frames;
+    if (frames <= 0 || ctx.transport == nullptr) return;
+
+    const TransportState& transport = *ctx.transport;
+    const double beatsPerBar = static_cast<double>(std::max(1, transport.timeSigNumerator));
+    const double bpm = transport.bpm > 0.0 ? transport.bpm : 120.0;
+    const double beatsPerFrame = bpm / (60.0 * transport.sampleRate);
+
+    const bool wanted = paramValue(pEngage_) > 0.5f;
+    const double lengthBeats = static_cast<double>(std::max(1, static_cast<int>(
+        std::lround(paramValue(pBars_))))) * beatsPerBar;
+
+    const auto release = static_cast<Release>(
+        static_cast<int>(std::lround(paramValue(pRelease_))));
+
+    engaged_.store(wanted, std::memory_order_relaxed);
+
+    // -- edges -------------------------------------------------------------
+    if (wanted && !running_) {
+        running_ = true;
+        releasePending_ = false;
+        startPpq_ = transport.ppqPosition;
+        riserPosition_ = 0.0;
+        riserPlaying_ = true;
+    } else if (!wanted && running_) {
+        // Letting go slightly early should still land on the grid, so the
+        // release is deferred to the next line unless it is set to immediate.
+        if (release == Release::Immediate) {
+            running_ = false;
+            riserPlaying_ = false;
+            releasePending_ = false;
+        } else {
+            releasePending_ = true;
+        }
+    }
+
+    const SampleBuffer* riser = riser_.get();
+    riserGain_.setTarget(running_ ? dsp::dbToGain(paramValue(pRiserGain_)) : 0.0f);
+
+    AudioBus& out = ctx.output(0);
+
+    for (int i = 0; i < frames; ++i) {
+        const double ppq = transport.ppqPosition + static_cast<double>(i) * beatsPerFrame;
+        const double previousPpq = ppq - beatsPerFrame;
+
+        if (releasePending_) {
+            const bool barEdge = std::floor(ppq / beatsPerBar) != std::floor(previousPpq / beatsPerBar);
+            const bool beatEdge = std::floor(ppq) != std::floor(previousPpq);
+            if ((release == Release::NextBar && barEdge)
+                || (release == Release::NextBeat && beatEdge)) {
+                running_ = false;
+                riserPlaying_ = false;
+                releasePending_ = false;
+            }
+        }
+
+        if (running_) {
+            const double elapsed = ppq - startPpq_;
+            // Held past the end of the build, the progress stays pinned at the
+            // top rather than wrapping - the drop happens when the switch is
+            // let go, not when a timer runs out.
+            const float p = static_cast<float>(clampValue(elapsed / lengthBeats, 0.0, 1.0));
+            progress_.store(p, std::memory_order_relaxed);
+        }
+
+        const float gain = riserGain_.next();
+
+        if (riserPlaying_ && riser != nullptr && !riser->empty() && gain > 0.0f) {
+            const std::int64_t index = static_cast<std::int64_t>(riserPosition_);
+            if (index >= 0 && index < riser->frames() - 1) {
+                const float fraction = static_cast<float>(riserPosition_ - static_cast<double>(index));
+
+                for (int c = 0; c < out.numChannels; ++c) {
+                    const float* data = riser->channel(c < riser->channels() ? c : riser->channels() - 1);
+                    out.chan(c)[i] = (data[index] + (data[index + 1] - data[index]) * fraction) * gain;
+                }
+            } else {
+                riserPlaying_ = false;
+            }
+
+            riserPosition_ += riser->sampleRate() / transport.sampleRate;
+        }
+    }
+
+    publishedProgress_.store(progress_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    publishedRunning_.store(running_, std::memory_order_release);
+}
+
+// ---------------------------------------------------------------------------
+// Driving the other nodes
+// ---------------------------------------------------------------------------
+
+void BuildNode::serviceFromMessageThread() {
+    riser_.collect();
+    driveTargets();
+}
+
+void BuildNode::driveTargets() {
+    if (!graph_) return;
+
+    const bool running = publishedRunning_.load(std::memory_order_acquire);
+    const float progress = publishedProgress_.load(std::memory_order_relaxed);
+
+    auto* stems = dynamic_cast<StemPlayerNode*>(graph_->node(stemPlayer_));
+    auto* color = dynamic_cast<ColorNode*>(graph_->node(colorNode_));
+
+    if (!running) {
+        // Put everything back exactly once. Writing the rest position every
+        // frame would stop the performer touching those controls by hand.
+        if (drivingTargets_) {
+            drivingTargets_ = false;
+
+            if (stems) {
+                if (const ParamIndex divide = stems->indexOfParameter(StemPlayerNode::kDivideParam);
+                    divide >= 0)
+                    stems->parameter(divide).setValue(0.0f);
+                if (const ParamIndex repeat = stems->indexOfParameter(StemPlayerNode::kRepeatParam);
+                    repeat >= 0)
+                    stems->parameter(repeat).setValue(0.0f);
+            }
+            if (color) color->setColor(restoreColor_);
+        }
+        return;
+    }
+
+    // First frame of a build: remember where the colour was so the drop returns
+    // to the sound the track had, not to neutral.
+    if (!drivingTargets_) {
+        drivingTargets_ = true;
+        restoreColor_ = color ? color->color() : 0.0f;
+    }
+
+    // -- loop divide -------------------------------------------------------
+    const int startChoice = clampValue(static_cast<int>(std::lround(paramValue(pStartDivide_))),
+                                       0, kDivideChoiceCount - 1);
+    const int endChoice = clampValue(static_cast<int>(std::lround(paramValue(pEndDivide_))),
+                                     0, kDivideChoiceCount - 1);
+
+    const auto curve = static_cast<Curve>(static_cast<int>(std::lround(paramValue(pCurve_))));
+
+    float shaped = progress;
+    switch (curve) {
+        case Curve::Accelerating:
+            // Most of the movement in the last quarter, which is how a build
+            // actually feels: nothing much, then everything at once.
+            shaped = progress * progress * progress;
+            break;
+        case Curve::Stepped16:
+            // Four hard steps rather than a ramp, for a stutter that arrives in
+            // obvious jumps instead of sliding.
+            shaped = std::floor(progress * 4.0f) / 3.0f;
+            break;
+        case Curve::Linear:
+        default:
+            break;
+    }
+    shaped = clampValue(shaped, 0.0f, 1.0f);
+
+    if (stems) {
+        const float choice = static_cast<float>(startChoice)
+                           + (static_cast<float>(endChoice - startChoice)) * shaped;
+
+        if (const ParamIndex divide = stems->indexOfParameter(StemPlayerNode::kDivideParam);
+            divide >= 0)
+            stems->parameter(divide).setValue(std::round(choice));
+
+        // Repeat only once the loop has actually been divided; latching the
+        // whole section is not a stutter, it is just the section.
+        if (const ParamIndex repeat = stems->indexOfParameter(StemPlayerNode::kRepeatParam);
+            repeat >= 0)
+            stems->parameter(repeat).setValue(std::round(choice) > 0.5f ? 1.0f : 0.0f);
+
+        // Dropping the low end is done by muting the stems the performer has
+        // named as low - by convention the first two slots, drums and bass.
+        // Muting rather than filtering because there is no filter here to use,
+        // and because a stem player with the bass muted is unambiguous.
+        if (paramValue(pKillLow_) > 0.5f && shaped > 0.6f) {
+            for (int slot = 0; slot < 2; ++slot) {
+                if (const ParamIndex mute = stems->indexOfParameter("mute" + std::to_string(slot + 1));
+                    mute >= 0)
+                    stems->parameter(mute).setValue(1.0f);
+            }
+        }
+    }
+
+    // -- colour ------------------------------------------------------------
+    if (color) {
+        const float push = paramValue(pColorPush_);
+        color->setColor(restoreColor_ + (push - restoreColor_) * shaped);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Persistence
+// ---------------------------------------------------------------------------
+
+void BuildNode::saveExtraState(JsonValue& out) const {
+    out.set("riser", riserPath_);
+    out.set("stemPlayer", static_cast<int>(stemPlayer_));
+    out.set("colorNode", static_cast<int>(colorNode_));
+}
+
+void BuildNode::loadExtraState(const JsonValue& in) {
+    stemPlayer_ = static_cast<NodeId>(in.getInt("stemPlayer", static_cast<int>(kInvalidNode)));
+    colorNode_ = static_cast<NodeId>(in.getInt("colorNode", static_cast<int>(kInvalidNode)));
+
+    if (const std::string path = in.getString("riser"); !path.empty())
+        loadRiser(path, nullptr);
+}
+
+} // namespace acm

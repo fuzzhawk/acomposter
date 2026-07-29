@@ -259,6 +259,25 @@ std::vector<AudioDeviceInfo> enumerate(EDataFlow flow) {
                 }
                 info.name = endpointName(device);
                 info.isDefault = !info.id.empty() && info.id == defaultId;
+
+                // The endpoint's mix format, read without opening a stream. The
+                // settings panel needs the channel count of a device the user
+                // has only *selected*, before it has ever been opened - without
+                // it there is no way to choose a routing for a device that is
+                // not already running.
+                IAudioClient* client = nullptr;
+                if (SUCCEEDED(device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
+                                               reinterpret_cast<void**>(&client)))) {
+                    WAVEFORMATEX* format = nullptr;
+                    if (SUCCEEDED(client->GetMixFormat(&format)) && format != nullptr) {
+                        const int channels = static_cast<int>(format->nChannels);
+                        if (flow == eRender) info.outputChannels = channels;
+                        else info.inputChannels = channels;
+                        ::CoTaskMemFree(format);
+                    }
+                    client->Release();
+                }
+
                 devices.push_back(std::move(info));
 
                 device->Release();

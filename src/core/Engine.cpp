@@ -146,6 +146,8 @@ void Engine::processInterleaved(const float* input, int inputChannels,
         for (int i = 0; i < frames; ++i) dst[static_cast<std::size_t>(i) * outputChannels] = src[i];
     }
 
+    renderOutputTest(output, outputChannels, frames);
+
     // Meters fall back at roughly 20 dB/s so peaks stay readable.
     const float decay = std::exp(-static_cast<float>(frames) / static_cast<float>(sampleRate_ * 0.35));
     for (int c = 0; c < 2; ++c) {
@@ -167,6 +169,75 @@ void Engine::processInterleaved(const float* input, int inputChannels,
 
     lastBlockSize_.store(frames, std::memory_order_relaxed);
     blockCounter_.fetch_add(1, std::memory_order_release);
+}
+
+// ---------------------------------------------------------------------------
+// Output identification
+// ---------------------------------------------------------------------------
+
+void Engine::startOutputTest(int firstChannel, int channelCount) noexcept {
+    outputTestFirst_.store(std::max(0, firstChannel), std::memory_order_relaxed);
+    outputTestCount_.store(std::max(1, channelCount), std::memory_order_relaxed);
+    outputTestChannel_.store(std::max(0, firstChannel), std::memory_order_relaxed);
+    // The audio thread owns the phase and the frame counter; it resets them when
+    // it sees the flag go up, so there is no race over them here.
+    outputTestActive_.store(true, std::memory_order_release);
+}
+
+void Engine::renderOutputTest(float* output, int outputChannels, int frames) noexcept {
+    if (!outputTestActive_.load(std::memory_order_acquire)) {
+        outputTestFrame_ = -1;
+        return;
+    }
+
+    // First block of a run: start the walk from the beginning.
+    if (outputTestFrame_ < 0) {
+        outputTestFrame_ = 0;
+        outputTestPhase_ = 0.0;
+    }
+
+    const int first = outputTestFirst_.load(std::memory_order_relaxed);
+    const int count = outputTestCount_.load(std::memory_order_relaxed);
+
+    // Six hundred milliseconds per output: long enough to walk to the rack and
+    // hear which one it is, short enough that twenty of them is not a chore.
+    const std::int64_t perChannel = static_cast<std::int64_t>(sampleRate_ * 0.6);
+    const double increment = 880.0 / sampleRate_;
+
+    for (int i = 0; i < frames; ++i) {
+        const std::int64_t position = outputTestFrame_ + i;
+        const int step = static_cast<int>(position / perChannel);
+
+        if (step >= count) {
+            outputTestActive_.store(false, std::memory_order_release);
+            outputTestChannel_.store(-1, std::memory_order_relaxed);
+            outputTestFrame_ = -1;
+            return;
+        }
+
+        const int channel = first + step;
+        outputTestChannel_.store(channel, std::memory_order_relaxed);
+        if (channel >= outputChannels) continue;
+
+        // A short blip inside each slot rather than a continuous tone, with
+        // raised-cosine edges so it does not click on a full-range system.
+        const std::int64_t inStep = position % perChannel;
+        const std::int64_t blip = static_cast<std::int64_t>(sampleRate_ * 0.25);
+        if (inStep >= blip) continue;
+
+        const double t = static_cast<double>(inStep) / static_cast<double>(blip);
+        const double envelope = 0.5 - 0.5 * std::cos(t * 2.0 * 3.14159265358979323846);
+
+        outputTestPhase_ += increment;
+        if (outputTestPhase_ >= 1.0) outputTestPhase_ -= 1.0;
+
+        const float tone = static_cast<float>(
+            std::sin(outputTestPhase_ * 2.0 * 3.14159265358979323846) * envelope * 0.25);
+
+        output[static_cast<std::size_t>(i) * outputChannels + channel] += tone;
+    }
+
+    outputTestFrame_ += frames;
 }
 
 EngineStats Engine::stats() const noexcept {

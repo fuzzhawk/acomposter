@@ -18,12 +18,15 @@ set(ACOMPOSTER_CORE_SOURCES
     audio/AudioFile.cpp
     audio/SampleBuffer.cpp
 
+    nodes/BuildNode.cpp
+    nodes/ColorNode.cpp
     nodes/CrossfaderNode.cpp
     nodes/IoNodes.cpp
     nodes/LooperNode.cpp
     nodes/MixerNode.cpp
     nodes/NodeFactory.cpp
     nodes/SamplePlayerNode.cpp
+    nodes/StemPlayerNode.cpp
     nodes/UtilityNodes.cpp
 
     meta/Metasurface.cpp

@@ -83,6 +83,7 @@ NodeId Graph::addNode(std::unique_ptr<Node> node) {
 
     const NodeId id = nextNodeId_++;
     node->setId(id);
+    node->setOwningGraph(this);
 
     if (prepared_) {
         PrepareInfo info{ sampleRate_, maxBlockSize_, clock_ };
@@ -100,6 +101,7 @@ NodeId Graph::addNodeWithId(std::unique_ptr<Node> node, NodeId id) {
     if (nodes_.size() >= static_cast<std::size_t>(kMaxNodes)) return kInvalidNode;
 
     node->setId(id);
+    node->setOwningGraph(this);
 
     if (prepared_) {
         PrepareInfo info{ sampleRate_, maxBlockSize_, clock_ };

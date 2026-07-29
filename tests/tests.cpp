@@ -17,7 +17,10 @@
 #include "../src/core/Transport.h"
 #include "../src/dsp/Dsp.h"
 #include "../src/meta/Metasurface.h"
+#include "../src/nodes/BuildNode.h"
+#include "../src/nodes/ColorNode.h"
 #include "../src/nodes/NodeFactory.h"
+#include "../src/nodes/StemPlayerNode.h"
 #include "../src/patch/Patch.h"
 #include "../src/vst2/PeArchitecture.h"
 
@@ -871,6 +874,263 @@ void testBase64() {
     CHECK(base64Decode("Zm9v\n YmFy") == base64Decode("Zm9vYmFy"));
 }
 
+
+// ---------------------------------------------------------------------------
+// Stem player
+// ---------------------------------------------------------------------------
+
+// Renders `beats` worth of blocks and returns the transport position reached,
+// so a test can assert about what happened across a musical span rather than a
+// sample count.
+double renderBeats(Graph& graph, TransportState& transport, double beats, int blockSize) {
+    const double beatsPerBlock = transport.bpm * blockSize / (60.0 * transport.sampleRate);
+    const int blocks = static_cast<int>(std::ceil(beats / beatsPerBlock));
+
+    for (int i = 0; i < blocks; ++i) {
+        graph.render(transport, blockSize, 0, nullptr, nullptr);
+        transport.ppqPosition += beatsPerBlock;
+    }
+    return transport.ppqPosition;
+}
+
+void testStemSectionLaunch() {
+    TEST("stem player defers a section change to the loop boundary");
+
+    BlockCounter clock{ 0 };
+    Graph graph;
+    graph.setClock(&clock);
+    graph.prepare(48000.0, 128);
+
+    auto owner = std::make_unique<StemPlayerNode>();
+    StemPlayerNode* stems = owner.get();
+    graph.addNode(std::move(owner));
+
+    // Two four-bar sections back to back.
+    stems->addSection(StemSection{ "a", 0, 4, 0.0f });
+    stems->addSection(StemSection{ "b", 4, 4, 0.5f });
+    CHECK(stems->sectionCount() == 2);
+
+    TransportState transport;
+    transport.sampleRate = 48000.0;
+    transport.bpm = 120.0;
+    transport.timeSigNumerator = 4;
+    transport.playing = true;
+
+    // Two bars in - halfway through section A's loop - ask for section B.
+    renderBeats(graph, transport, 8.0, 128);
+    CHECK(stems->activeSection() == 0);
+
+    stems->requestSection(1);
+    renderBeats(graph, transport, 1.0, 128);
+
+    // Still playing A, with B queued: the whole point of the deferred launch.
+    CHECK(stems->activeSection() == 0);
+    CHECK(stems->pendingSection() == 1);
+
+    // Past the end of the sixteen-beat loop, B has taken over.
+    renderBeats(graph, transport, 8.0, 128);
+    CHECK(stems->activeSection() == 1);
+    CHECK(stems->pendingSection() == -1);
+}
+
+void testStemImmediateLaunch() {
+    TEST("stem player switches at once when asked to");
+
+    BlockCounter clock{ 0 };
+    Graph graph;
+    graph.setClock(&clock);
+    graph.prepare(48000.0, 128);
+
+    auto owner = std::make_unique<StemPlayerNode>();
+    StemPlayerNode* stems = owner.get();
+    graph.addNode(std::move(owner));
+
+    stems->addSection(StemSection{ "a", 0, 4, 0.0f });
+    stems->addSection(StemSection{ "b", 4, 4, 0.5f });
+
+    const ParamIndex launch = stems->indexOfParameter("launch");
+    CHECK(launch >= 0);
+    stems->parameter(launch).setValue(3.0f);   // immediate
+
+    TransportState transport;
+    transport.sampleRate = 48000.0;
+    transport.bpm = 120.0;
+    transport.playing = true;
+
+    renderBeats(graph, transport, 2.0, 128);
+    stems->requestSection(1);
+    renderBeats(graph, transport, 0.25, 128);
+
+    CHECK(stems->activeSection() == 1);
+}
+
+void testStemSectionPersistence() {
+    TEST("stem sections survive a save and load");
+
+    StemPlayerNode source;
+    source.addSection(StemSection{ "intro", 0, 8, 0.1f });
+    source.addSection(StemSection{ "drop", 16, 16, 0.7f });
+
+    JsonValue state = JsonValue::object();
+    source.saveExtraState(state);
+
+    StemPlayerNode loaded;
+    loaded.loadExtraState(state);
+
+    CHECK(loaded.sectionCount() == 2);
+    CHECK(loaded.sections()[1].name == "drop");
+    CHECK(loaded.sections()[1].startBar == 16);
+    CHECK(loaded.sections()[1].lengthBars == 16);
+}
+
+// ---------------------------------------------------------------------------
+// Colour engine
+// ---------------------------------------------------------------------------
+
+void testColorNeutralIsUnchanged() {
+    TEST("colour engine leaves the middle untouched");
+
+    registerBuiltinNodes();
+
+    BlockCounter clock{ 0 };
+    Graph graph;
+    graph.setClock(&clock);
+    graph.prepare(48000.0, 128);
+
+    // A plain gain node stands in for a plugin: what matters is that it has an
+    // automatable parameter, not what it does with it.
+    const NodeId target = graph.addNode(NodeFactory::instance().create("util.gain"));
+    CHECK(target != kInvalidNode);
+
+    auto owner = std::make_unique<ColorNode>();
+    ColorNode* color = owner.get();
+    const NodeId colorId = graph.addNode(std::move(owner));
+    CHECK(colorId != kInvalidNode);
+
+    Node* gain = graph.node(target);
+    const ParamIndex gainParam = gain->indexOfParameter("gain");
+    CHECK(gainParam >= 0);
+
+    // Neutral is captured where the chain already sits.
+    gain->parameter(gainParam).setNormalised(0.5f);
+    color->addTarget(ParamAddress{ target, gainParam }, graph);
+    color->captureEnd(ColorNode::End::Neutral, graph);
+
+    gain->parameter(gainParam).setNormalised(0.0f);
+    color->captureEnd(ColorNode::End::Red, graph);
+
+    gain->parameter(gainParam).setNormalised(1.0f);
+    color->captureEnd(ColorNode::End::Blue, graph);
+
+    // Dead centre puts it back exactly where neutral was captured, whatever the
+    // two ends are - the property that makes the knob safe to leave alone.
+    color->setColor(0.0f);
+    color->serviceFromMessageThread();
+    CHECK_CLOSE(gain->parameter(gainParam).normalised(), 0.5, 1e-4);
+
+    color->setColor(-1.0f);
+    color->serviceFromMessageThread();
+    CHECK_CLOSE(gain->parameter(gainParam).normalised(), 0.0, 1e-4);
+
+    color->setColor(1.0f);
+    color->serviceFromMessageThread();
+    CHECK_CLOSE(gain->parameter(gainParam).normalised(), 1.0, 1e-4);
+
+    // Half way to red is half way between neutral and red, not between red and
+    // blue - the two half-axes have to be independent for an asymmetric preset.
+    color->setColor(-0.5f);
+    color->serviceFromMessageThread();
+    CHECK_CLOSE(gain->parameter(gainParam).normalised(), 0.25, 1e-4);
+}
+
+void testColorPresetRebinds() {
+    TEST("colour preset re-binds by name, not by index");
+
+    registerBuiltinNodes();
+
+    BlockCounter clock{ 0 };
+    Graph graph;
+    graph.setClock(&clock);
+    graph.prepare(48000.0, 128);
+
+    const NodeId target = graph.addNode(NodeFactory::instance().create("util.gain"));
+    graph.node(target)->setName("volcano");
+
+    auto owner = std::make_unique<ColorNode>();
+    ColorNode* color = owner.get();
+    graph.addNode(std::move(owner));
+
+    Node* gain = graph.node(target);
+    const ParamIndex gainParam = gain->indexOfParameter("gain");
+    color->addTarget(ParamAddress{ target, gainParam }, graph);
+    color->captureEnd(ColorNode::End::Neutral, graph);
+    gain->parameter(gainParam).setNormalised(0.2f);
+    color->captureEnd(ColorNode::End::Red, graph);
+
+    const JsonValue preset = color->savePreset("tight", graph);
+
+    // Into a second graph where the same node has a different id.
+    BlockCounter otherClock{ 0 };
+    Graph other;
+    other.setClock(&otherClock);
+    other.prepare(48000.0, 128);
+
+    other.addNode(NodeFactory::instance().create("util.gain"));   // shifts the ids along
+    const NodeId moved = other.addNode(NodeFactory::instance().create("util.gain"));
+    other.node(moved)->setName("volcano");
+
+    auto secondOwner = std::make_unique<ColorNode>();
+    ColorNode* second = secondOwner.get();
+    other.addNode(std::move(secondOwner));
+
+    std::vector<std::string> unmatched;
+    const int bound = second->loadPreset(preset, other, &unmatched);
+
+    CHECK(bound == 1);
+    CHECK(unmatched.empty());
+    CHECK(second->targets()[0].address.node == moved);
+    CHECK_CLOSE(second->targets()[0].redValue, 0.2, 1e-4);
+}
+
+void testColorPresetReportsMissing() {
+    TEST("colour preset reports what it could not bind");
+
+    registerBuiltinNodes();
+
+    BlockCounter clock{ 0 };
+    Graph graph;
+    graph.setClock(&clock);
+    graph.prepare(48000.0, 128);
+
+    const NodeId target = graph.addNode(NodeFactory::instance().create("util.gain"));
+    graph.node(target)->setName("aether");
+
+    auto owner = std::make_unique<ColorNode>();
+    ColorNode* color = owner.get();
+    graph.addNode(std::move(owner));
+
+    color->addTarget(ParamAddress{ target, graph.node(target)->indexOfParameter("gain") }, graph);
+    const JsonValue preset = color->savePreset("wash", graph);
+
+    // A graph with no plugin of that name at all.
+    BlockCounter emptyClock{ 0 };
+    Graph empty;
+    empty.setClock(&emptyClock);
+    empty.prepare(48000.0, 128);
+
+    auto secondOwner = std::make_unique<ColorNode>();
+    ColorNode* second = secondOwner.get();
+    empty.addNode(std::move(secondOwner));
+
+    std::vector<std::string> unmatched;
+    const int bound = second->loadPreset(preset, empty, &unmatched);
+
+    // Nothing bound, and it said so rather than pointing at the wrong control.
+    CHECK(bound == 0);
+    CHECK(unmatched.size() == 1);
+    CHECK(second->targets().empty());
+}
+
 } // namespace
 
 int main() {
@@ -888,6 +1148,12 @@ int main() {
     testGraphFeedback();
     testChannelAdaptation();
     testBypass();
+    testStemSectionLaunch();
+    testStemImmediateLaunch();
+    testStemSectionPersistence();
+    testColorNeutralIsUnchanged();
+    testColorPresetRebinds();
+    testColorPresetReportsMissing();
     testMetasurfaceInterpolation();
     testMetasurfacePath();
     testPatchRoundTrip();

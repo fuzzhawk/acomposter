@@ -123,7 +123,9 @@ public:
     void initialise(Engine* engine, platform::AudioDeviceSettings* settings);
 
     void open();
-    void close() { visible_ = false; }
+    // Stops the identify tone on the way out: a blip walking the outputs after
+    // the panel has gone is a noise with no visible cause.
+    void close();
     bool visible() const noexcept { return visible_; }
 
     // Draws over `bounds` when open. Returns true if it consumed the frame's
