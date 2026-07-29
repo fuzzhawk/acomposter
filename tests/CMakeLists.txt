@@ -10,8 +10,12 @@ add_executable(acomposter_tests
 
 target_link_libraries(acomposter_tests PRIVATE acomposter_core acomposter_flags)
 
+# CTest finds the target regardless, but keeping the runner beside the binaries
+# it exercises makes it easy to run by hand from a build tree.
 set_target_properties(acomposter_tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/bin
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/bin
 )
 
 add_test(NAME acomposter COMMAND acomposter_tests)
