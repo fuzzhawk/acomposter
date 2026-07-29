@@ -19,7 +19,12 @@ jobs:
   # -------------------------------------------------------------------------
   windows:
     name: windows (msvc)
-    runs-on: windows-2022
+    runs-on: windows-latest
+
+    # Needed by the release step on tagged builds. Repositories default the
+    # token to read-only, which would fail the upload rather than the build.
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
