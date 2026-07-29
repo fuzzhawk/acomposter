@@ -1052,12 +1052,55 @@ int Ui::popupMenu(UiId control, const Rect& rect, const std::vector<std::string>
 
     Rect cursorRect = rect.deflated(t.smallPadding);
 
+    // A list too long for the popup scrolls rather than being cut off. It used
+    // to simply stop drawing when it ran out of room, so a 24-output interface
+    // silently offered 14 channels and there was no way to reach the rest.
+    const float contentHeight = static_cast<float>(items.size()) * t.rowHeight;
+    const float maximumOffset = std::max(0.0f, contentHeight - cursorRect.height);
+
+    ScrollState* scroll = nullptr;
+    if (maximumOffset > 0.0f) {
+        for (ScrollState& candidate : scrollStates_)
+            if (candidate.id == control) { scroll = &candidate; break; }
+        if (!scroll) {
+            scrollStates_.push_back(ScrollState{ control, 0.0f, contentHeight, rect });
+            scroll = &scrollStates_.back();
+        }
+
+        // The popup owns the pointer while it is open, so the wheel needs no
+        // hover test beyond being inside it.
+        if (rect.contains(input_.mousePosition) && input_.wheel != 0.0f)
+            scroll->offset -= input_.wheel * t.rowHeight * 3.0f;
+        scroll->offset = clampValue(scroll->offset, 0.0f, maximumOffset);
+
+        // Keep the current choice on screen when the popup is first opened,
+        // otherwise picking output 20 means scrolling to find where you are.
+        if (popupJustOpened_ && selected >= 0) {
+            const float selectedTop = static_cast<float>(selected) * t.rowHeight;
+            if (selectedTop < scroll->offset)
+                scroll->offset = selectedTop;
+            else if (selectedTop + t.rowHeight > scroll->offset + cursorRect.height)
+                scroll->offset = selectedTop + t.rowHeight - cursorRect.height;
+            scroll->offset = clampValue(scroll->offset, 0.0f, maximumOffset);
+        }
+
+        cursorRect.width -= t.scrollBarWidth;
+        cursorRect.y -= scroll->offset;
+        cursorRect.height = contentHeight;
+    }
+
+    const Rect visible = rect.deflated(t.smallPadding);
+
     for (std::size_t i = 0; i < items.size(); ++i) {
         const Rect row = cursorRect.removeFromTop(t.rowHeight);
-        if (row.height < t.rowHeight * 0.5f) break;
+        // Rows scrolled out of view are skipped, not stopped at.
+        if (row.bottom() < visible.top() || row.top() > visible.bottom()) continue;
 
         const bool itemEnabled = !enabled || i >= enabled->size() || (*enabled)[i];
-        const UiId itemId = idFrom(&items, static_cast<int>(i) + 1);
+        // Salted from the popup's own id. Keying these off the address of the
+        // item vector meant two combos whose lists happened to live at the same
+        // stack address shared every row id between them.
+        const UiId itemId = control ^ (static_cast<UiId>(i + 1) * 0x9E3779B97F4A7C15ull);
 
         bool hovered = false, held = false;
         const bool clicked = itemEnabled && buttonBehaviour(itemId, row, hovered, held);
@@ -1082,7 +1125,19 @@ int Ui::popupMenu(UiId control, const Rect& rect, const std::vector<std::string>
         if (clicked) chosen = static_cast<int>(i);
     }
 
-    (void)control;
+    // A slim bar, so it is obvious there is more list below.
+    if (maximumOffset > 0.0f && scroll != nullptr) {
+        const Rect track{ visible.right() - t.scrollBarWidth + 2.0f, visible.top(),
+                          t.scrollBarWidth - 2.0f, visible.height };
+        const float thumbHeight = std::max(24.0f, track.height * (visible.height / contentHeight));
+        const float progress = scroll->offset / maximumOffset;
+        overlayList_.addRectFilled(track, t.widgetTrack, 2.0f);
+        overlayList_.addRectFilled(Rect{ track.left(), track.top()
+                                             + (track.height - thumbHeight) * progress,
+                                         track.width, thumbHeight },
+                                   t.borderStrong, 2.0f);
+    }
+
     return chosen;
 }
 
@@ -1112,9 +1167,14 @@ bool Ui::combo(UiId control, const Rect& rect, const std::vector<std::string>& i
         if (popupOpen(control)) {
             closePopup();
         } else {
-            const float height = std::min(static_cast<float>(items.size()) * t.rowHeight
-                                              + t.smallPadding * 2.0f,
-                                          320.0f);
+            // Sized to what the list wants, capped by the room actually below
+            // the control - a fixed ceiling meant a long list was cut off on a
+            // tall display that had plenty of space for it.
+            const float wanted = static_cast<float>(items.size()) * t.rowHeight
+                               + t.smallPadding * 2.0f;
+            const float below = displaySize_.y - rect.bottom() - 10.0f;
+            const float above = rect.top() - 10.0f;
+            const float height = std::min(wanted, std::max(std::max(below, above), 120.0f));
             openPopup(control, { rect.left(), rect.bottom() + 2.0f }, { rect.width, height });
         }
     }

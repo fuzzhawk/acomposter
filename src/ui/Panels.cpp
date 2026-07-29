@@ -543,7 +543,12 @@ void InspectorView::drawBuildSection(Ui& ui, Rect& area, Node& node) {
 
     // Two pickers, one per kind of target. Listing only the nodes that can
     // actually be driven means a wrong choice is not possible.
-    const auto picker = [&](const char* caption, const char* typeName, NodeId current,
+    // `salt` has to be a constant per picker, not anything derived from the list.
+    // Deriving it from the list length made both pickers collide the moment they
+    // happened to have the same number of candidates - and in an immediate-mode
+    // interface two widgets sharing an id are one widget, so opening either
+    // opened both and the selection landed on whichever drew last.
+    const auto picker = [&](int salt, const char* caption, const char* typeName, NodeId current,
                             const std::function<void(NodeId)>& assign) {
         Rect row = area.removeFromTop(20.0f);
         ui.label(row.removeFromLeft(52.0f), caption, t.textFaint, t.fontSmall);
@@ -559,16 +564,16 @@ void InspectorView::drawBuildSection(Ui& ui, Rect& area, Node& node) {
             ids.push_back(candidate->id());
         }
 
-        if (ui.combo(ui.idFrom(&node, 950 + static_cast<int>(names.size())), row, names, selected)
+        if (ui.combo(ui.idFrom(&node, salt), row, names, selected)
             && selected >= 0 && selected < static_cast<int>(ids.size()))
             assign(ids[static_cast<std::size_t>(selected)]);
 
         area.removeFromTop(3.0f);
     };
 
-    picker("stems", "stem.player", build->stemPlayer(),
+    picker(950, "stems", "stem.player", build->stemPlayer(),
            [build](NodeId id) { build->setStemPlayer(id); });
-    picker("colour", "color", build->colorNode(),
+    picker(951, "colour", "color", build->colorNode(),
            [build](NodeId id) { build->setColorNode(id); });
 
     Rect riserRow = area.removeFromTop(18.0f);
