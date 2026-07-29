@@ -82,6 +82,7 @@ bool Application::initialise() {
     pluginView_.initialise(&plugins_);
     settings_.initialise(&engine_, &deviceSettings_);
     settings_.onApplyAudioSettings = [this] { restartAudioDevice(); };
+    settings_.onShowControlPanel = [this] { if (device_) device_->showControlPanel(); };
     transportBar_.initialise(&engine_);
     statusBar_.initialise(&engine_, &plugins_);
 
@@ -89,9 +90,7 @@ bool Application::initialise() {
     browser_.onLoadSample = [this](const std::string& path) {
         auto player = std::make_unique<SamplePlayerNode>();
         player->loadFile(path, nullptr);
-        patcher_.placeNode(std::move(player), patcher_.defaultDropPosition(
-            Rect{ 0.0f, 0.0f, static_cast<float>(window_.width()),
-                  static_cast<float>(window_.height()) }));
+        patcher_.placeNode(std::move(player), patcher_.defaultDropPosition(canvasBounds()));
         markModified();
     };
 
@@ -127,7 +126,7 @@ bool Application::initialise() {
     if (!openAudioDevice()) {
         // Not fatal: the patcher is still usable, and the device can be opened
         // once the user has sorted out whatever is wrong.
-        ui_.notify("no audio device: " + device_.status().error, ui::theme().danger, 8.0f);
+        ui_.notify("no audio device: " + device_->status().error, ui::theme().danger, 8.0f);
     }
 
     // The plugin node loader needs the engine's rate, so it is registered after
@@ -141,13 +140,48 @@ bool Application::initialise() {
 }
 
 bool Application::openAudioDevice() {
-    const bool opened = device_.open(deviceSettings_, [this](const float* input, int inputChannels,
-                                                             float* output, int outputChannels,
-                                                             int frames) {
-        engine_.processInterleaved(input, inputChannels, output, outputChannels, frames);
-    });
+    // The backend is part of the settings, so the object itself is replaced
+    // rather than reconfigured. Anything that was running has already been
+    // closed by the caller.
+    if (!device_ || deviceBackend_ != deviceSettings_.backend) {
+        device_ = platform::createAudioDevice(deviceSettings_.backend);
+        deviceBackend_ = deviceSettings_.backend;
+    }
 
-    const platform::AudioDeviceStatus status = device_.status();
+    const auto callback = [this](const float* input, int inputChannels,
+                                 float* output, int outputChannels, int frames) {
+        engine_.processInterleaved(input, inputChannels, output, outputChannels, frames);
+    };
+
+    bool opened = device_->open(deviceSettings_, callback);
+
+    // ASIO is the better device when it is there, but it is also the one that
+    // can be held by another application, uninstalled, or simply unplugged.
+    // Falling back keeps the rest of the program usable instead of leaving it
+    // silent with an error nobody reads.
+    if (!opened && deviceSettings_.backend == platform::AudioBackend::Asio) {
+        const std::string reason = device_->status().error;
+
+        device_ = platform::createAudioDevice(platform::AudioBackend::Wasapi);
+        deviceBackend_ = platform::AudioBackend::Wasapi;
+
+        platform::AudioDeviceSettings fallback = deviceSettings_;
+        fallback.backend = platform::AudioBackend::Wasapi;
+        // The device id and channel routing belong to the ASIO driver and mean
+        // nothing to an endpoint, so the fallback takes the defaults.
+        fallback.outputDeviceId.clear();
+        fallback.inputDeviceId.clear();
+        fallback.outputChannelCount = 0;
+        fallback.outputChannelOffset = 0;
+
+        opened = device_->open(fallback, callback);
+        if (opened) {
+            ui_.notify("ASIO unavailable (" + reason + ") - using WASAPI",
+                       ui::theme().danger, 8.0f);
+        }
+    }
+
+    const platform::AudioDeviceStatus status = device_->status();
 
     // The engine is prepared even when the device failed, so the graph still has
     // a sane sample rate for anything the user builds in the meantime.
@@ -161,12 +195,12 @@ bool Application::openAudioDevice() {
 
 void Application::restartAudioDevice() {
     // Stop first: the callback must not be running while the graph is re-prepared.
-    device_.close();
+    if (device_) device_->close();
 
     if (openAudioDevice()) {
         ui_.notify("audio device restarted", ui::theme().accent, 2.5f);
     } else {
-        const std::string error = device_.status().error;
+        const std::string error = device_->status().error;
         ui_.notify("could not open that device: " + (error.empty() ? "unknown error" : error),
                    ui::theme().danger, 8.0f);
     }
@@ -180,7 +214,7 @@ void Application::shutdown() {
 
     // Order matters on the way out: stop the audio callback before anything it
     // touches is destroyed, and close plugin editors before their plugins.
-    device_.close();
+    if (device_) device_->close();
     closeAllPluginEditors();
 
     saveSettings();
@@ -249,15 +283,24 @@ void Application::serviceBackground() {
     // its chance to do message-thread work (plugin idle, waveform rebuilds).
     engine_.serviceFromMessageThread();
 
-    // Files dropped on the window go to the canvas.
+    // Files dropped on the window go to the canvas. The rectangle has to be the
+    // one the patcher actually draws into, or the drop lands at the wrong world
+    // position and misses the node it was aimed at.
     if (!input_.droppedFiles.empty()) {
-        const Rect canvasBounds{ 0.0f, ui::TransportBar::height(),
-                                 static_cast<float>(window_.width()),
-                                 static_cast<float>(window_.height()) };
+        const Rect canvas = canvasBounds();
         for (const std::string& file : input_.droppedFiles) {
-            if (patcher_.handleFileDrop(file, input_.dropPosition, canvasBounds))
+            if (patcher_.handleFileDrop(file, input_.dropPosition, canvas))
                 markModified();
         }
+    }
+
+    // An ASIO driver asking to be reset, because the user changed the buffer
+    // size in its control panel or the interface was unplugged and put back.
+    // It has to happen here rather than in the callback: reopening the driver
+    // from inside its own callback deadlocks it.
+    if (device_ && device_->consumeResetRequest()) {
+        restartAudioDevice();
+        return;
     }
 
     // A plugin editor opened from the canvas.
@@ -265,8 +308,25 @@ void Application::serviceBackground() {
         togglePluginEditor(request);
 }
 
+gfx::Rect Application::canvasBounds() const {
+    Rect area{ 0.0f, 0.0f, static_cast<float>(window_.width()),
+               static_cast<float>(window_.height()) };
+
+    area.removeFromTop(ui::TransportBar::height());
+    area.removeFromBottom(ui::StatusBar::height());
+    if (showBrowser_) area.removeFromLeft(browserWidth_);
+    if (showInspector_) area.removeFromRight(inspectorWidth_);
+
+    return area;
+}
+
 void Application::layout(float deltaSeconds) {
     const ui::Theme& t = ui::theme();
+
+    // Declared before anything is drawn. The settings sheet is drawn last so it
+    // sits on top, and by then every view beneath it has already been offered
+    // the frame's input - so the block has to be in place before they run.
+    ui_.setModalActive(settings_.visible());
 
     Rect full{ 0.0f, 0.0f, static_cast<float>(window_.width()),
                static_cast<float>(window_.height()) };
@@ -324,13 +384,15 @@ void Application::layout(float deltaSeconds) {
             break;
     }
 
-    statusBar_.render(ui_, statusArea, device_.description());
+    statusBar_.render(ui_, statusArea, device_ ? device_->description() : std::string());
 
     // Drawn over everything, and it takes the frame's input when open so a
     // click meant for a combo inside it cannot also reach the canvas beneath.
+    settings_.setControlPanelAvailable(device_ && device_->running()
+                                       && device_->hasControlPanel());
     settings_.render(ui_, Rect{ 0.0f, 0.0f, static_cast<float>(window_.width()),
                                 static_cast<float>(window_.height()) },
-                     device_.status());
+                     device_ ? device_->status() : platform::AudioDeviceStatus{});
 
     // The drag ghost follows the pointer above everything else.
     if (ui_.dragging()) {
@@ -505,21 +567,19 @@ void Application::addPluginNode(const vst2::PluginDescription& description, bool
                                          std::max(64, engine_.stats().blockSize),
                                          forceBridge, &error);
 
-    const Rect canvasBounds{ 0.0f, ui::TransportBar::height(),
-                             static_cast<float>(window_.width()),
-                             static_cast<float>(window_.height()) };
-
     // The node is placed even when the plugin would not load: the error is
     // visible on the box, which is far more useful than a dialog and nothing.
-    patcher_.placeNode(std::move(node), patcher_.defaultDropPosition(canvasBounds));
+    // placeNode drops it in the middle of the canvas and selects it.
+    patcher_.placeNode(std::move(node), patcher_.defaultDropPosition(canvasBounds()));
     markModified();
 
-    if (loaded) {
-        activeView_ = ui::MainView::Patch;
-        ui_.notify("added " + description.name, ui::theme().accent, 2.5f);
-    } else {
-        ui_.notify(description.name + ": " + error, ui::theme().danger, 8.0f);
-    }
+    // Switch to the canvas either way. Staying on the plugin list after a failed
+    // load leaves the new node somewhere the user cannot see, which reads as the
+    // button having done nothing at all.
+    activeView_ = ui::MainView::Patch;
+
+    if (loaded) ui_.notify("added " + description.name, ui::theme().accent, 2.5f);
+    else ui_.notify(description.name + ": " + error, ui::theme().danger, 8.0f);
 }
 
 void Application::togglePluginEditor(NodeId nodeId) {
@@ -546,12 +606,13 @@ void Application::loadSettings() {
     if (!parseError.empty() || !root.isObject()) return;
 
     if (const JsonValue* audio = root.find("audio")) {
+        deviceSettings_.backend = platform::audioBackendFromString(audio->getString("backend"));
         deviceSettings_.outputDeviceId = audio->getString("outputDeviceId");
         deviceSettings_.inputDeviceId = audio->getString("inputDeviceId");
         deviceSettings_.enableInput = audio->getBool("enableInput", true);
         deviceSettings_.blockSize = clampValue(audio->getInt("blockSize", 256), 32, 4096);
-        deviceSettings_.outputChannelCount = clampValue(audio->getInt("outputChannelCount", 0), 0, 32);
-        deviceSettings_.outputChannelOffset = clampValue(audio->getInt("outputChannelOffset", 0), 0, 31);
+        deviceSettings_.outputChannelCount = clampValue(audio->getInt("outputChannelCount", 0), 0, 256);
+        deviceSettings_.outputChannelOffset = clampValue(audio->getInt("outputChannelOffset", 0), 0, 255);
     }
 
     if (const JsonValue* interfaceSettings = root.find("interface")) {
@@ -560,6 +621,12 @@ void Application::loadSettings() {
         showBrowser_ = interfaceSettings->getBool("showBrowser", true);
         showInspector_ = interfaceSettings->getBool("showInspector", true);
         vsync_ = interfaceSettings->getBool("vsync", true);
+
+        // Where the sample library is does not change between sessions, and
+        // walking back to it from Documents every launch gets old fast.
+        if (const std::string directory = interfaceSettings->getString("browserDirectory");
+            !directory.empty())
+            browser_.navigateTo(directory);
     }
 
     if (const JsonValue* master = root.find("master")) {
@@ -574,6 +641,7 @@ void Application::saveSettings() const {
     root.set("version", 1);
 
     JsonValue audio = JsonValue::object();
+    audio.set("backend", platform::toString(deviceSettings_.backend));
     audio.set("outputDeviceId", deviceSettings_.outputDeviceId);
     audio.set("inputDeviceId", deviceSettings_.inputDeviceId);
     audio.set("enableInput", deviceSettings_.enableInput);
@@ -588,6 +656,7 @@ void Application::saveSettings() const {
     interfaceSettings.set("showBrowser", showBrowser_);
     interfaceSettings.set("showInspector", showInspector_);
     interfaceSettings.set("vsync", vsync_);
+    interfaceSettings.set("browserDirectory", browser_.currentDirectory());
     root.set("interface", interfaceSettings);
 
     JsonValue master = JsonValue::object();

@@ -46,9 +46,24 @@ std::string humanSize(std::int64_t bytes) {
 // ---------------------------------------------------------------------------
 
 void BrowserView::initialise() {
-    places_.push_back({ "patches", paths::patchesDirectory() });
-    places_.push_back({ "recordings", paths::recordingsDirectory() });
-    places_.push_back({ "documents", paths::documents() });
+    // Ours first, because that is where saved work goes, then the folders people
+    // actually keep samples in, then every mounted volume. A browser that can
+    // only see the application's own directories cannot reach a sample library,
+    // which makes it look like there is no browser at all.
+    const auto add = [this](std::string name, std::string path) {
+        if (!path.empty()) places_.push_back({ std::move(name), std::move(path) });
+    };
+
+    add("patches", paths::patchesDirectory());
+    add("recordings", paths::recordingsDirectory());
+    add("home", paths::userProfile());
+    add("desktop", paths::desktop());
+    add("downloads", paths::downloads());
+    add("music", paths::musicFolder());
+    add("documents", paths::documents());
+
+    for (const std::string& root : paths::driveRoots())
+        add(root.substr(0, 2), root);   // "C:\" reads better as "C:"
 
     currentDirectory_ = paths::patchesDirectory();
     needsRefresh_ = true;
@@ -73,16 +88,35 @@ void BrowserView::refresh() {
 }
 
 void BrowserView::drawPlaces(Ui& ui, Rect& area) {
-    Rect row = area.removeFromTop(20.0f);
-    for (const Place& place : places_) {
-        const float width = std::min(76.0f, row.width / static_cast<float>(places_.size()));
-        const Rect button = row.removeFromLeft(width);
+    const Theme& t = theme();
+    const float rowHeight = 19.0f;
+    const float gap = 3.0f;
 
-        if (ui.button(ui.id("browser.place." + place.name), button, place.name,
-                      Ui::ButtonStyle::Ghost))
+    // Chips wrap onto as many rows as they need. A single row of fixed-width
+    // buttons silently dropped everything past the fourth place once drives were
+    // added, which is exactly the sort of thing nobody notices is missing.
+    Rect row = area.removeFromTop(rowHeight);
+    for (const Place& place : places_) {
+        const float width = std::min(ui.font(t.fontUi).textWidth(place.name)
+                                         + t.smallPadding * 2.0f + 8.0f,
+                                     area.width);
+
+        if (width > row.width) {
+            area.removeFromTop(gap);
+            row = area.removeFromTop(rowHeight);
+        }
+
+        const Rect chip = row.removeFromLeft(width);
+        row.removeFromLeft(gap);
+
+        const bool here = place.path == currentDirectory_;
+        if (ui.button(ui.id("browser.place." + place.path), chip, place.name,
+                      Ui::ButtonStyle::Toggle, here))
             navigateTo(place.path);
+        if (ui.isHot(ui.id("browser.place." + place.path))) ui.setTooltip(place.path);
     }
-    area.removeFromTop(4.0f);
+
+    area.removeFromTop(6.0f);
 }
 
 void BrowserView::render(Ui& ui, const Rect& bounds) {
@@ -111,9 +145,25 @@ void BrowserView::render(Ui& ui, const Rect& bounds) {
     }
     if (ui.isHot(ui.id("browser.up"))) ui.setTooltip("Go up one folder");
 
-    ui.draw().addTextClipped(ui.font(t.fontSmall), pathRow, t.textFaint,
-                             pathLeaf(currentDirectory_).empty() ? currentDirectory_
-                                                                 : pathLeaf(currentDirectory_));
+    const Rect refreshButton = pathRow.removeFromRight(24.0f);
+    if (ui.iconButton(ui.id("browser.refresh"), refreshButton, Ui::Icon::Refresh, t.textDim))
+        needsRefresh_ = true;
+    if (ui.isHot(ui.id("browser.refresh"))) ui.setTooltip("Re-read this folder");
+    pathRow.removeFromRight(4.0f);
+
+    // Editable, so a path can be pasted straight in. Navigating by clicking
+    // through from a drive root is a lot of clicks when you already know where
+    // the library lives.
+    if (pathBufferFor_ != currentDirectory_) {
+        pathBuffer_ = currentDirectory_;
+        pathBufferFor_ = currentDirectory_;
+    }
+    if (ui.textField(ui.id("browser.path"), pathRow, pathBuffer_, "path")) {
+        const std::string typed = pathNormalise(pathBuffer_);
+        if (!typed.empty() && typed != currentDirectory_) navigateTo(typed);
+    }
+    if (ui.isHot(ui.id("browser.path"))) ui.setTooltip(currentDirectory_);
+
     area.removeFromTop(4.0f);
 
     // -- filter ------------------------------------------------------------
@@ -130,6 +180,14 @@ void BrowserView::render(Ui& ui, const Rect& bounds) {
     const float rowHeight = 21.0f;
     Rect content = ui.beginScroll(ui.id("browser.list"), area,
                                   static_cast<float>(visible.size()) * rowHeight);
+
+    // An empty panel is indistinguishable from a broken one, so say which it is.
+    if (visible.empty()) {
+        ui.draw().addTextClipped(ui.font(t.fontSmall), content.removeFromTop(40.0f), t.textFaint,
+                                 entries_.empty() ? "no audio or patch files here"
+                                                  : "nothing matches that filter",
+                                 DrawList::Align::Centre);
+    }
 
     for (const DirectoryEntry* entry : visible) {
         const Rect row = content.removeFromTop(rowHeight);
@@ -474,6 +532,13 @@ void PluginManagerView::render(Ui& ui, const Rect& bounds) {
             visible.push_back(&plugin);
     }
 
+    // Carve the action strip out of the panel before the scroller claims what is
+    // left. Floating it over the list would put a row underneath every button,
+    // and because the rows are processed first they would take the press and the
+    // buttons would never fire.
+    Rect actionRow = area.removeFromBottom(38.0f);
+    actionRow.removeFromTop(8.0f);
+
     const float rowHeight = 26.0f;
     const float contentHeight = static_cast<float>(visible.size()) * rowHeight
                               + (showFailures_ ? static_cast<float>(failures.size()) * 20.0f + 26.0f : 0.0f);
@@ -496,7 +561,7 @@ void PluginManagerView::render(Ui& ui, const Rect& bounds) {
         bool hovered = false, held = false;
         const bool clicked = ui.buttonBehaviour(rowId, row, hovered, held);
 
-        const bool isSelected = static_cast<int>(i) == selectedIndex_;
+        const bool isSelected = plugin.path == selectedPath_;
         if (isSelected) ui.draw().addRectFilled(row, t.accent.withAlpha(0.10f), t.cornerRadius);
         else if (hovered) ui.draw().addRectFilled(row, t.widgetHover, t.cornerRadius);
 
@@ -528,7 +593,7 @@ void PluginManagerView::render(Ui& ui, const Rect& bounds) {
                                  hovered || isSelected ? t.text : t.textDim, plugin.name);
 
         if (clicked) {
-            selectedIndex_ = static_cast<int>(i);
+            selectedPath_ = plugin.path;
             if (ui.input().mouseDoubleClicked[static_cast<int>(MouseButton::Left)] && onAddPlugin)
                 onAddPlugin(plugin, forceBridge_);
         }
@@ -556,13 +621,24 @@ void PluginManagerView::render(Ui& ui, const Rect& bounds) {
 
     ui.endScroll();
 
-    // -- add button --------------------------------------------------------
-    if (selectedIndex_ >= 0 && selectedIndex_ < static_cast<int>(visible.size())) {
-        const Rect addRow{ bounds.right() - 190.0f, bounds.bottom() - 44.0f, 174.0f, 30.0f };
-        if (ui.button(ui.id("plugins.add"), addRow, "add to patch", Ui::ButtonStyle::Primary)) {
-            if (onAddPlugin) onAddPlugin(*visible[static_cast<std::size_t>(selectedIndex_)], forceBridge_);
-        }
+    // -- action strip ------------------------------------------------------
+    // Resolved from the list rather than remembered as a pointer: `plugins` is a
+    // fresh copy each frame, so anything held across frames would dangle.
+    const vst2::PluginDescription* selected = nullptr;
+    for (const vst2::PluginDescription* candidate : visible)
+        if (candidate->path == selectedPath_) { selected = candidate; break; }
+
+    const Rect addRect = actionRow.removeFromRight(174.0f);
+    if (ui.button(ui.id("plugins.add"), addRect, "add to patch",
+                  Ui::ButtonStyle::Primary, false, selected != nullptr) && selected) {
+        if (onAddPlugin) onAddPlugin(*selected, forceBridge_);
     }
+
+    actionRow.removeFromRight(10.0f);
+    ui.draw().addTextClipped(ui.font(t.fontSmall), actionRow, t.textFaint,
+                             selected ? selected->name + "  -  " + selected->vendor
+                                      : "select a plugin, or double-click one to add it",
+                             DrawList::Align::Right);
 }
 
 
@@ -577,6 +653,7 @@ void SettingsView::initialise(Engine* engine, platform::AudioDeviceSettings* set
 
 void SettingsView::open() {
     visible_ = true;
+    justOpened_ = true;
     dirty_ = false;
     if (settings_) draft_ = *settings_;
     // Enumerating endpoints touches COM and can take a moment on a machine with
@@ -585,17 +662,27 @@ void SettingsView::open() {
 }
 
 void SettingsView::refreshDeviceLists() {
-    outputDevices_ = platform::WasapiDevice::outputDevices();
-    inputDevices_ = platform::WasapiDevice::inputDevices();
+    asioAvailable_ = platform::audioBackendAvailable(platform::AudioBackend::Asio);
+
+    outputDevices_ = platform::outputDevices(draft_.backend);
+    inputDevices_ = platform::inputDevices(draft_.backend);
+
+    // The channel count is the thing worth knowing when picking between two
+    // interfaces from the same manufacturer, and it is why the ASIO list is
+    // worth the cost of opening each driver to ask.
+    const auto describe = [](const platform::AudioDeviceInfo& device) {
+        std::string text = device.name;
+        if (device.outputChannels > 0) text += "  (" + std::to_string(device.outputChannels) + " out)";
+        if (device.isDefault) text += "  (default)";
+        return text;
+    };
 
     outputNames_.clear();
-    for (const auto& device : outputDevices_)
-        outputNames_.push_back(device.name + (device.isDefault ? "  (default)" : ""));
+    for (const auto& device : outputDevices_) outputNames_.push_back(describe(device));
 
     inputNames_.clear();
     inputNames_.push_back("none");
-    for (const auto& device : inputDevices_)
-        inputNames_.push_back(device.name + (device.isDefault ? "  (default)" : ""));
+    for (const auto& device : inputDevices_) inputNames_.push_back(describe(device));
 
     deviceListsLoaded_ = true;
 }
@@ -606,22 +693,34 @@ bool SettingsView::render(Ui& ui, const Rect& bounds, const platform::AudioDevic
     const Theme& t = theme();
     DrawList& list = ui.draw();
 
-    // Scrim. Clicking it dismisses, which is what people try first.
+    // Everything from here on is inside the modal, so it is the only thing the
+    // pointer can reach. The application put the Ui into modal mode before any
+    // of the views underneath ran; this is the hole punched in it.
+    ui.beginModal();
+    struct EndModal {
+        Ui& ui;
+        ~EndModal() { ui.endModal(); }
+    } endModal{ ui };
+
+    // Scrim.
     list.addRectFilled(bounds, Colour{ 0.0f, 0.0f, 0.0f, 0.55f });
-    if (ui.hovering(bounds) && ui.input().mousePressed[static_cast<int>(MouseButton::Left)]) {
-        // Only outside the sheet; the sheet's own rect is tested below.
-    }
 
     const float width = std::min(t.scaled(520.0f), bounds.width - t.scaled(40.0f));
     const float height = std::min(t.scaled(460.0f), bounds.height - t.scaled(40.0f));
     const Rect sheet{ bounds.centre().x - width * 0.5f, bounds.centre().y - height * 0.5f,
                       width, height };
 
-    if (ui.input().mousePressed[static_cast<int>(MouseButton::Left)]
+    // Dismiss on a click outside the sheet - but never on the very press that
+    // opened it. The button that opens the panel is itself outside the sheet,
+    // and when a press and its release land in the same frame the panel would
+    // otherwise open and close without ever being drawn.
+    if (!justOpened_
+        && ui.input().mousePressed[static_cast<int>(MouseButton::Left)]
         && !sheet.contains(ui.input().mousePosition)) {
         close();
         return true;
     }
+    justOpened_ = false;
 
     list.addRectFilled(sheet.translated({ 0.0f, 4.0f }), Colour{ 0.0f, 0.0f, 0.0f, 0.5f },
                        t.cornerRadiusLarge);
@@ -653,6 +752,48 @@ bool SettingsView::render(Ui& ui, const Rect& bounds, const platform::AudioDevic
     // -- audio output ------------------------------------------------------
     ui.label(area.removeFromTop(t.scaled(18.0f)), "audio output", t.accent, t.fontUiBold);
     area.removeFromTop(t.scaled(4.0f));
+
+    {
+        // The driver model comes first because it decides what everything below
+        // it can offer. WASAPI shared mode is stuck with the endpoint's mix
+        // format, which is stereo on nearly every interface no matter how many
+        // outputs it has; ASIO is what reaches the rest of them.
+        Rect row = labelled(area, "driver");
+
+        const Rect backendArea = row.removeFromLeft(row.width * 0.46f);
+        row.removeFromLeft(t.scaled(8.0f));
+
+        static const std::vector<std::string> backends = { "WASAPI (shared)", "ASIO" };
+        int backendIndex = draft_.backend == platform::AudioBackend::Asio ? 1 : 0;
+
+        if (ui.combo(ui.id("settings.backend"), backendArea, backends, backendIndex)) {
+            const auto chosen = backendIndex == 1 ? platform::AudioBackend::Asio
+                                                  : platform::AudioBackend::Wasapi;
+            if (chosen != draft_.backend) {
+                draft_.backend = chosen;
+                // Device ids do not carry across backends, and neither does a
+                // routing offset chosen against a different channel count.
+                draft_.outputDeviceId.clear();
+                draft_.inputDeviceId.clear();
+                draft_.outputChannelCount = 0;
+                draft_.outputChannelOffset = 0;
+                refreshDeviceLists();
+                dirty_ = true;
+            }
+        }
+
+        if (draft_.backend == platform::AudioBackend::Asio && !asioAvailable_) {
+            ui.label(row, "no ASIO driver installed", t.danger, t.fontSmall);
+        } else if (onShowControlPanel && draft_.backend == platform::AudioBackend::Asio) {
+            // The driver's own window is the only place its buffer size and
+            // clock source can be set, so there has to be a way to reach it.
+            if (ui.button(ui.id("settings.asiopanel"), row, "driver control panel",
+                          Ui::ButtonStyle::Normal, false, controlPanelAvailable_))
+                onShowControlPanel();
+            if (ui.isHot(ui.id("settings.asiopanel")) && !controlPanelAvailable_)
+                ui.setTooltip("Available once the ASIO driver is open. Apply first.");
+        }
+    }
 
     {
         Rect row = labelled(area, "device");

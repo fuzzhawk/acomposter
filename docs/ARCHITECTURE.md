@@ -226,10 +226,59 @@ dictated by the thing it is showing rather than by a layout algorithm.
 
 ## Audio I/O
 
-WASAPI shared mode, event driven. Shared rather than exclusive because
-acomposter is meant to sit alongside whatever else is making noise, and because
-exclusive mode fails outright on a device another application already holds —
-a bad way to start a set.
+Two backends behind one `platform::AudioDevice` interface, chosen in settings.
+The application opens a device, hands over a callback and reads a status; which
+backend is underneath is not something it knows.
+
+### WASAPI
+
+Shared mode, event driven. Shared rather than exclusive because acomposter is
+meant to sit alongside whatever else is making noise, and because exclusive mode
+fails outright on a device another application already holds — a bad way to
+start a set.
+
+The cost of shared mode is that the endpoint's mix format is fixed, and on
+nearly every interface Windows publishes that as stereo no matter how many
+outputs the hardware has. The channel count and offset in settings can only
+route within those two.
+
+### ASIO
+
+The backend that reaches the rest of the outputs. It talks to the
+manufacturer's own driver, which exposes every channel the interface has, and
+runs at buffer sizes shared mode will not.
+
+`AsioAbi.h` is a clean-room declaration of the interface, written from the
+published specification for the same reason `Vst2Abi.h` is: Steinberg's SDK
+cannot be redistributed, and the vtable order and structure layouts *are* the
+interface. Sizes are pinned with `static_assert` so a mistake in a layout is a
+compile error rather than a driver writing into the wrong bytes.
+
+Two properties of ASIO shape the implementation. A driver is instantiated with
+`CoCreateInstance` passing its CLSID as both the class id *and* the interface
+id — there is no registered IID for `IAsio`. And the callbacks are bare function
+pointers with no user-data argument, so the active device has to be reachable
+from a global and a process can host exactly one driver at a time. Both are
+properties of the interface rather than shortcuts.
+
+Every output channel is requested from the driver, not just the ones the patch
+reaches, because a channel with no buffer is one the driver may keep running
+with stale contents. The unused ones are explicitly silenced each block;
+whatever was in that half of the double buffer is the previous block, and
+repeating it is an audible buzz.
+
+A driver that asks to be reset — the user changed its buffer size in its own
+control panel, or the interface was unplugged and put back — raises a flag that
+the message thread acts on. Reopening the driver from inside its own callback
+deadlocks it.
+
+The header is 64-bit only. On x86 the SDK's methods specify no calling
+convention, so they resolve to `__thiscall` under MSVC and cannot be described
+portably; on x64 there is one convention and the question does not arise.
+`acomposter.exe` is x64, so 64-bit drivers are what it loads.
+
+A failed ASIO open falls back to WASAPI rather than leaving the program silent
+behind an error nobody reads.
 
 Capture, when enabled, runs on its own client with its own event. The two streams
 have independent clocks and will drift, so capture frames reach the render thread

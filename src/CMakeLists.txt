@@ -90,6 +90,8 @@ set(ACOMPOSTER_APP_SOURCES
     gfx/FontAtlas.cpp
     gfx/Renderer.cpp
 
+    platform/AsioDevice.cpp
+    platform/AudioDevice.cpp
     platform/FileDialog.cpp
     platform/WasapiDevice.cpp
     platform/Window.cpp

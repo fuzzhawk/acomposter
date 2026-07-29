@@ -23,6 +23,18 @@ std::string documents();
 std::string patchesDirectory();
 std::string recordingsDirectory();
 
+// The places worth putting one click away in the file browser. Samples live
+// wherever the user keeps them, which is almost never under our own directories.
+std::string desktop();
+std::string downloads();
+std::string musicFolder();
+std::string userProfile();
+
+// Roots of every fixed and removable volume that is currently mounted, as
+// "C:\", "D:\" and so on. Without these the browser cannot reach a sample
+// library on a second drive at all.
+std::vector<std::string> driveRoots();
+
 // Directory containing acomposter.exe, used to find the bridge helpers.
 std::string executableDirectory();
 

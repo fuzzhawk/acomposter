@@ -14,7 +14,7 @@
 #include "../gfx/Renderer.h"
 #include "../meta/Metasurface.h"
 #include "../patch/Patch.h"
-#include "../platform/WasapiDevice.h"
+#include "../platform/AudioDevice.h"
 #include "../platform/Window.h"
 #include "../ui/MetasurfaceView.h"
 #include "../ui/Panels.h"
@@ -48,6 +48,12 @@ private:
     void handleGlobalShortcuts();
     void serviceBackground();
 
+    // The rectangle the patcher canvas occupies, matching exactly what layout()
+    // hands to PatcherView::render. Anything that converts screen coordinates to
+    // world coordinates outside of the render pass has to go through here, or it
+    // works in a different coordinate space to the one on screen.
+    gfx::Rect canvasBounds() const;
+
     // -- patch management --------------------------------------------------
     void newPatch();
     void openPatch();
@@ -80,7 +86,12 @@ private:
     vst2::PluginManager plugins_;
 
     platform::Window window_;
-    platform::WasapiDevice device_;
+    // Which backend is behind this is a setting, so it is held by pointer and
+    // replaced wholesale when the setting changes. Never null once initialised.
+    std::unique_ptr<platform::AudioDevice> device_;
+    // What `device_` actually is, which is not always what the settings ask for:
+    // a failed ASIO open falls back to WASAPI.
+    platform::AudioBackend deviceBackend_ = platform::AudioBackend::Wasapi;
     platform::AudioDeviceSettings deviceSettings_;
 
     gfx::Renderer renderer_;

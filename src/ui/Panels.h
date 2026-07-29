@@ -10,7 +10,7 @@
 #include "../core/Engine.h"
 #include "../core/FileIo.h"
 #include "../meta/Metasurface.h"
-#include "../platform/WasapiDevice.h"
+#include "../platform/AudioDevice.h"
 #include "../vst2/PluginManager.h"
 #include "Ui.h"
 
@@ -46,6 +46,11 @@ private:
     std::vector<DirectoryEntry> entries_;
     std::string filter_;
     bool needsRefresh_ = true;
+
+    // Edit buffer for the path field, and the directory it was filled from, so
+    // typing is not overwritten every frame by the directory we are still in.
+    std::string pathBuffer_;
+    std::string pathBufferFor_;
 
     struct Place { std::string name; std::string path; };
     std::vector<Place> places_;
@@ -98,7 +103,10 @@ private:
     std::string search_;
     bool showFailures_ = false;
     bool forceBridge_ = false;
-    int selectedIndex_ = -1;
+    // Held by path rather than by row index: the visible list is rebuilt from
+    // the search filter every frame, so an index would silently come to mean a
+    // different plugin as soon as the filter changed.
+    std::string selectedPath_;
 };
 
 // ---------------------------------------------------------------------------
@@ -124,6 +132,15 @@ public:
 
     // Raised when the user applies a change that needs the device reopening.
     std::function<void()> onApplyAudioSettings;
+    // Opens the ASIO driver's own settings window, which is the only place its
+    // buffer size and clock source can be changed.
+    std::function<void()> onShowControlPanel;
+
+    // Told by the application whether the device that is actually open has a
+    // control panel to show.
+    void setControlPanelAvailable(bool available) noexcept {
+        controlPanelAvailable_ = available;
+    }
 
 private:
     void refreshDeviceLists();
@@ -133,6 +150,10 @@ private:
 
     bool visible_ = false;
     bool deviceListsLoaded_ = false;
+    // Set by open(), cleared after the first frame: see the dismissal check.
+    bool justOpened_ = false;
+    bool asioAvailable_ = false;
+    bool controlPanelAvailable_ = false;
 
     std::vector<platform::AudioDeviceInfo> outputDevices_;
     std::vector<platform::AudioDeviceInfo> inputDevices_;

@@ -216,6 +216,17 @@ public:
     void beginTextEdit(UiId control, const std::string& initial, bool selectAll);
     void cancelTextEdit();
 
+    // -- modality ----------------------------------------------------------
+    // A modal sheet is drawn on top of everything, which in an immediate-mode
+    // interface means it is drawn *last* - by which point every view underneath
+    // has already had the frame's input and taken it. Telling the Ui a modal is
+    // up, before any of them run, is what stops that: hovering fails everywhere
+    // except between beginModal and endModal.
+    void setModalActive(bool active) noexcept { modalActive_ = active; }
+    bool modalActive() const noexcept { return modalActive_; }
+    void beginModal() noexcept { insideModal_ = true; }
+    void endModal() noexcept { insideModal_ = false; }
+
     // -- popups ------------------------------------------------------------
     // A popup opened this frame is drawn in the overlay next frame onwards,
     // above everything, and closes on click-outside or Escape.
@@ -309,6 +320,8 @@ private:
     Rect popupRect_;
     bool popupJustOpened_ = false;
     bool insidePopup_ = false;
+    bool modalActive_ = false;
+    bool insideModal_ = false;
 
     struct ScrollState {
         UiId id = kNoId;
