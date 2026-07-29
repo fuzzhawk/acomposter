@@ -1,0 +1,172 @@
+name: build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  # -------------------------------------------------------------------------
+  # The shipping build: MSVC, both architectures, packaged together.
+  #
+  # Two configure passes are needed because the 32-bit bridge helper is a
+  # separate binary of a different architecture - that is the whole point of it.
+  # -------------------------------------------------------------------------
+  windows:
+    name: windows (msvc)
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure x64
+        run: >
+          cmake -B build/x64 -A x64
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DACOMPOSTER_BUILD_TESTS=ON
+
+      - name: Build x64 (application, 64-bit bridge, tests)
+        run: cmake --build build/x64 --config ${{ env.BUILD_TYPE }} --parallel
+
+      - name: Configure x86 bridge
+        run: >
+          cmake -B build/x86 -A Win32
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DACOMPOSTER_BRIDGE_ONLY=ON
+
+      - name: Build x86 bridge
+        run: cmake --build build/x86 --config ${{ env.BUILD_TYPE }} --parallel
+
+      - name: Run tests
+        working-directory: build/x64
+        run: ctest -C ${{ env.BUILD_TYPE }} --output-on-failure
+
+      - name: Assemble the distribution
+        shell: pwsh
+        run: |
+          $dist = "dist/acomposter"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+
+          # The 64-bit build already puts acomposter.exe and the 64-bit bridge in
+          # bin/; the 32-bit bridge comes from the second configure pass and has
+          # to sit beside them, because that is where the host looks for it.
+          Copy-Item "build/x64/bin/acomposter.exe" $dist
+          Copy-Item "build/x64/bin/acomposter-bridge64.exe" $dist
+          Copy-Item (Get-ChildItem -Recurse -Filter "acomposter-bridge32.exe" -Path build/x86 |
+                     Select-Object -First 1).FullName $dist
+
+          Copy-Item "README.md" $dist
+          Copy-Item "LICENSE" $dist -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path "$dist/docs" | Out-Null
+          Copy-Item "docs/*" "$dist/docs" -Recurse
+
+          Get-ChildItem $dist | Format-Table Name, Length
+
+      - name: Verify the binaries are the architectures they claim to be
+        shell: pwsh
+        run: |
+          # A 32-bit bridge that is accidentally built as x64 would fail only at
+          # run time, on someone else's machine, with a confusing error. Check it
+          # here instead.
+          function Get-PeMachine($path) {
+            $bytes = [System.IO.File]::ReadAllBytes($path)
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            return [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          }
+
+          $expected = @{
+            "dist/acomposter/acomposter.exe"           = 0x8664
+            "dist/acomposter/acomposter-bridge64.exe"  = 0x8664
+            "dist/acomposter/acomposter-bridge32.exe"  = 0x014C
+          }
+
+          $failed = $false
+          foreach ($entry in $expected.GetEnumerator()) {
+            $machine = Get-PeMachine $entry.Key
+            $ok = $machine -eq $entry.Value
+            "{0,-44} machine=0x{1:X4} expected=0x{2:X4} {3}" -f `
+              $entry.Key, $machine, $entry.Value, $(if ($ok) { "ok" } else { "WRONG" })
+            if (-not $ok) { $failed = $true }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path dist/acomposter/* -DestinationPath acomposter-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: acomposter-windows-x64
+          path: acomposter-windows-x64.zip
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: acomposter-windows-x64.zip
+          generate_release_notes: true
+
+  # -------------------------------------------------------------------------
+  # A second toolchain, to keep the tree honest.
+  #
+  # mingw-w64 cross-compiles both architectures from Linux and catches the
+  # MSVC-specific assumptions that creep in otherwise - missing includes,
+  # non-standard extensions, and layout differences in the bridge protocol,
+  # whose static_asserts fail the build if the two architectures ever disagree.
+  # -------------------------------------------------------------------------
+  cross:
+    name: cross-compile (mingw-w64)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 ninja-build
+
+      - name: Build x64
+        run: |
+          cmake -B build/win64 -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DACOMPOSTER_WERROR=ON
+          cmake --build build/win64
+
+      - name: Build the 32-bit bridge
+        run: |
+          cmake -B build/win32 -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-i686.cmake \
+            -DACOMPOSTER_BRIDGE_ONLY=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DACOMPOSTER_WERROR=ON
+          cmake --build build/win32
+
+      - name: Run the portable tests on the host
+        run: |
+          # The engine, codecs, metasurface and patch format have no Windows
+          # dependency, so they can be tested natively without an emulator.
+          g++ -std=c++20 -O1 -Wall -Wextra -Wno-unused-parameter -I src \
+            tests/tests.cpp \
+            src/core/Engine.cpp src/core/FileIo.cpp src/core/Graph.cpp \
+            src/core/Json.cpp src/core/Node.cpp src/core/Parameter.cpp \
+            src/core/Transport.cpp \
+            src/audio/*.cpp src/nodes/*.cpp src/meta/*.cpp src/patch/*.cpp \
+            src/vst2/PeArchitecture.cpp src/vst2/Vst2Plugin.cpp \
+            -o /tmp/acomposter_tests
+          /tmp/acomposter_tests
+
+      - name: Check the cross-built binaries
+        run: |
+          file build/win64/bin/acomposter.exe
+          file build/win64/bin/acomposter-bridge64.exe
+          file build/win32/src/acomposter-bridge32.exe
+          file build/win32/src/acomposter-bridge32.exe | grep -q "PE32 executable" \
+            || { echo "the 32-bit bridge is not a 32-bit binary"; exit 1; }

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
 
 #include <windows.h>
 #include <d3d11.h>

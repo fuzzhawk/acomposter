@@ -4,6 +4,7 @@
 #include "Utf.h"
 
 #include <algorithm>
+#include <iterator>
 
 #include <windows.h>
 #include <shlobj.h>

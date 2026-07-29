@@ -84,6 +84,16 @@ if(NOT MSVC)
     target_compile_options(acomposter_flags INTERFACE -msse2 -mfpmath=sse)
 endif()
 
+# The GUI executables enter through wWinMain. MSVC infers that from UNICODE, but
+# mingw's startup code goes looking for a narrow WinMain unless it is told
+# otherwise, at both compile and link time. This is deliberately kept off the
+# shared flags: the test runner is a console program with a plain main().
+add_library(acomposter_wide_entry INTERFACE)
+if(NOT MSVC)
+    target_compile_options(acomposter_wide_entry INTERFACE -municode)
+    target_link_options(acomposter_wide_entry INTERFACE -municode)
+endif()
+
 # ---------------------------------------------------------------------------
 # Sources
 # ---------------------------------------------------------------------------

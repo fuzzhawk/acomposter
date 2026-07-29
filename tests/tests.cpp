@@ -11,6 +11,7 @@
 #include "../src/core/Engine.h"
 #include "../src/core/Graph.h"
 #include "../src/core/Base64.h"
+#include "../src/core/FileIo.h"
 #include "../src/core/Json.h"
 #include "../src/core/Parameter.h"
 #include "../src/core/Transport.h"
@@ -18,9 +19,11 @@
 #include "../src/meta/Metasurface.h"
 #include "../src/nodes/NodeFactory.h"
 #include "../src/patch/Patch.h"
+#include "../src/vst2/PeArchitecture.h"
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -783,6 +786,70 @@ void testPatchRejectsRubbish() {
     CHECK(result.warnings.size() == 2);
 }
 
+void testPeArchitecture() {
+    TEST("PE architecture detection");
+
+    // Builds the smallest thing readPeArchitecture will accept: a DOS stub whose
+    // e_lfanew points at a PE signature, followed by the COFF machine field and
+    // the characteristics word. This is the check that decides whether a plugin
+    // can be loaded in-process or has to go through the bridge, so it is worth
+    // pinning down rather than only exercising against whatever is installed.
+    const auto buildImage = [](std::uint16_t machine, std::uint16_t characteristics) {
+        std::vector<std::uint8_t> image(0x100, 0);
+        image[0] = 'M';
+        image[1] = 'Z';
+
+        constexpr std::uint32_t peOffset = 0x80;
+        image[0x3C] = static_cast<std::uint8_t>(peOffset & 0xFF);
+        image[0x3D] = static_cast<std::uint8_t>((peOffset >> 8) & 0xFF);
+
+        image[peOffset + 0] = 'P';
+        image[peOffset + 1] = 'E';
+        image[peOffset + 2] = 0;
+        image[peOffset + 3] = 0;
+        image[peOffset + 4] = static_cast<std::uint8_t>(machine & 0xFF);
+        image[peOffset + 5] = static_cast<std::uint8_t>((machine >> 8) & 0xFF);
+        image[peOffset + 22] = static_cast<std::uint8_t>(characteristics & 0xFF);
+        image[peOffset + 23] = static_cast<std::uint8_t>((characteristics >> 8) & 0xFF);
+        return image;
+    };
+
+    const std::string path = "acomposter-pe-test.bin";
+    constexpr std::uint16_t kDllFlag = 0x2000;
+
+    auto image = buildImage(0x8664, kDllFlag);
+    CHECK(writeFileBytes(path, image.data(), image.size()));
+    CHECK(vst2::readPeArchitecture(path) == vst2::Architecture::X64);
+    CHECK(vst2::isDynamicLibrary(path));
+
+    image = buildImage(0x014C, kDllFlag);
+    CHECK(writeFileBytes(path, image.data(), image.size()));
+    CHECK(vst2::readPeArchitecture(path) == vst2::Architecture::X86);
+
+    // An executable is a valid PE but not something to try loading as a plugin.
+    image = buildImage(0x8664, 0);
+    CHECK(writeFileBytes(path, image.data(), image.size()));
+    CHECK(!vst2::isDynamicLibrary(path));
+
+    // ARM64 is a real machine type we deliberately do not support.
+    image = buildImage(0xAA64, kDllFlag);
+    CHECK(writeFileBytes(path, image.data(), image.size()));
+    CHECK(vst2::readPeArchitecture(path) == vst2::Architecture::Unknown);
+
+    // Not a PE at all.
+    const char* garbage = "this is not a windows binary at all, not even close";
+    CHECK(writeFileBytes(path, garbage, std::strlen(garbage)));
+    CHECK(vst2::readPeArchitecture(path) == vst2::Architecture::Unknown);
+
+    // A missing file must report rather than crash.
+    std::string error;
+    CHECK(vst2::readPeArchitecture("no-such-file-anywhere.dll", &error)
+              == vst2::Architecture::Unknown);
+    CHECK(!error.empty());
+
+    std::remove(path.c_str());
+}
+
 void testBase64() {
     TEST("base64 round trip");
 
@@ -825,6 +892,7 @@ int main() {
     testMetasurfacePath();
     testPatchRoundTrip();
     testPatchRejectsRubbish();
+    testPeArchitecture();
     testBase64();
 
     std::printf("----------------\n%d checks, %d failures\n", g_checks, g_failures);

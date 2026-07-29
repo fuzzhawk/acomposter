@@ -54,6 +54,7 @@ inline constexpr int Right = 0x27;
 inline constexpr int Down = 0x28;
 inline constexpr int Delete = 0x2E;
 inline constexpr int A = 'A';
+inline constexpr int B = 'B';
 inline constexpr int C = 'C';
 inline constexpr int D = 'D';
 inline constexpr int N = 'N';
