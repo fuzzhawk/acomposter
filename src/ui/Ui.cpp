@@ -1011,11 +1011,18 @@ void Ui::openPopup(UiId control, Vec2 anchor, Vec2 size) {
     popupId_ = control;
     popupJustOpened_ = true;
 
-    // Flip rather than clip when the popup would fall off an edge.
+    // Flip rather than clip when the popup would fall off an edge. The edge is
+    // the container's when there is one, so a dropdown inside a modal sheet
+    // stays inside it.
+    const float leftLimit = hasPopupContainer_ ? popupContainer_.left() : 0.0f;
+    const float rightLimit = hasPopupContainer_ ? popupContainer_.right() : displaySize_.x;
+    const float topLimit = hasPopupContainer_ ? popupContainer_.top() : 0.0f;
+    const float bottomLimit = hasPopupContainer_ ? popupContainer_.bottom() : displaySize_.y;
+
     float x = anchor.x;
     float y = anchor.y;
-    if (x + size.x > displaySize_.x - 4.0f) x = std::max(4.0f, displaySize_.x - size.x - 4.0f);
-    if (y + size.y > displaySize_.y - 4.0f) y = std::max(4.0f, anchor.y - size.y);
+    if (x + size.x > rightLimit - 4.0f) x = std::max(leftLimit + 4.0f, rightLimit - size.x - 4.0f);
+    if (y + size.y > bottomLimit - 4.0f) y = std::max(topLimit + 4.0f, anchor.y - size.y);
 
     popupRect_ = Rect{ x, y, size.x, size.y };
 }
@@ -1167,13 +1174,17 @@ bool Ui::combo(UiId control, const Rect& rect, const std::vector<std::string>& i
         if (popupOpen(control)) {
             closePopup();
         } else {
-            // Sized to what the list wants, capped by the room actually below
-            // the control - a fixed ceiling meant a long list was cut off on a
-            // tall display that had plenty of space for it.
+            // Sized to what the list wants, capped by the room actually
+            // available - a fixed ceiling meant a long list was cut off on a
+            // tall display that had plenty of space for it. Inside a modal the
+            // room is the modal's, not the window's.
             const float wanted = static_cast<float>(items.size()) * t.rowHeight
                                + t.smallPadding * 2.0f;
-            const float below = displaySize_.y - rect.bottom() - 10.0f;
-            const float above = rect.top() - 10.0f;
+            const float limitTop = hasPopupContainer_ ? popupContainer_.top() : 0.0f;
+            const float limitBottom = hasPopupContainer_ ? popupContainer_.bottom() : displaySize_.y;
+
+            const float below = limitBottom - rect.bottom() - 10.0f;
+            const float above = rect.top() - limitTop - 10.0f;
             const float height = std::min(wanted, std::max(std::max(below, above), 120.0f));
             openPopup(control, { rect.left(), rect.bottom() + 2.0f }, { rect.width, height });
         }

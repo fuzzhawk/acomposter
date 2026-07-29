@@ -232,6 +232,12 @@ public:
     void beginModal() noexcept { insideModal_ = true; }
     void endModal() noexcept { insideModal_ = false; }
 
+    // Bounds popups to a rectangle rather than to the window. A modal sheet
+    // sets this to itself so its dropdowns stay inside it and scroll, instead
+    // of hanging out over the canvas where they read as belonging to neither.
+    void setPopupContainer(const Rect& r) noexcept { popupContainer_ = r; hasPopupContainer_ = true; }
+    void clearPopupContainer() noexcept { hasPopupContainer_ = false; }
+
     // -- popups ------------------------------------------------------------
     // A popup opened this frame is drawn in the overlay next frame onwards,
     // above everything, and closes on click-outside or Escape.
@@ -325,6 +331,8 @@ private:
     Rect popupRect_;
     bool popupJustOpened_ = false;
     bool insidePopup_ = false;
+    Rect popupContainer_{};
+    bool hasPopupContainer_ = false;
     // Sub-step remainder while an integer field is being dragged.
     float dragAccumulator_ = 0.0f;
     bool modalActive_ = false;

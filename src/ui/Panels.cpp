@@ -935,7 +935,7 @@ bool SettingsView::render(Ui& ui, const Rect& bounds, const platform::AudioDevic
     ui.beginModal();
     struct EndModal {
         Ui& ui;
-        ~EndModal() { ui.endModal(); }
+        ~EndModal() { ui.endModal(); ui.clearPopupContainer(); }
     } endModal{ ui };
 
     // Scrim.
@@ -946,11 +946,23 @@ bool SettingsView::render(Ui& ui, const Rect& bounds, const platform::AudioDevic
     const Rect sheet{ bounds.centre().x - width * 0.5f, bounds.centre().y - height * 0.5f,
                       width, height };
 
+    // Dropdowns opened in here belong to the sheet, so they are bounded by it
+    // and scroll when a list will not fit rather than hanging out over the
+    // canvas below.
+    ui.setPopupContainer(sheet);
+
     // Dismiss on a click outside the sheet - but never on the very press that
     // opened it. The button that opens the panel is itself outside the sheet,
     // and when a press and its release land in the same frame the panel would
     // otherwise open and close without ever being drawn.
+    //
+    // A popup opened *by* the sheet counts as part of it. A dropdown longer
+    // than the room below its control hangs past the sheet's bottom edge, and
+    // without this exception clicking a row down there was a click outside the
+    // sheet: the panel closed instead of the value being picked, so anything
+    // past about the fourteenth entry could not be chosen at all.
     if (!justOpened_
+        && ui.currentPopup() == kNoId
         && ui.input().mousePressed[static_cast<int>(MouseButton::Left)]
         && !sheet.contains(ui.input().mousePosition)) {
         close();
