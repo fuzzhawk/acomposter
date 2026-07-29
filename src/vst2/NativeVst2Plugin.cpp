@@ -31,6 +31,8 @@ std::string productString() { return "acomposter"; }
 
 } // namespace
 
+void* NativeVst2Plugin::ownerWindow_ = nullptr;
+
 // ---------------------------------------------------------------------------
 // Host callback
 // ---------------------------------------------------------------------------
@@ -543,7 +545,12 @@ bool NativeVst2Plugin::openEditor() {
         if (w > 0 && h > 0 && w < 8192 && h < 8192) { width = w; height = h; }
     }
 
-    if (!editorWindow_.create(description_.name, width, height)) {
+    // The window has to know how to hand the close back to us: tearing the
+    // editor down means effEditClose first, which the window procedure cannot
+    // do on its own.
+    editorWindow_.setOnClose([this] { editorCloseRequested_.store(true, std::memory_order_release); });
+
+    if (!editorWindow_.create(description_.name, width, height, ownerWindow_)) {
         error_ = "could not create a window for the plugin editor";
         return false;
     }
@@ -574,6 +581,13 @@ void NativeVst2Plugin::closeEditor() {
 }
 
 void NativeVst2Plugin::idle() {
+    // A close requested from the window's title bar is serviced here, where it
+    // is safe to run the full teardown.
+    if (editorCloseRequested_.exchange(false, std::memory_order_acquire)) {
+        closeEditor();
+        return;
+    }
+
     if (editorOpen_) dispatch(effEditIdle);
 
     const int width = editorWidth_.exchange(0, std::memory_order_relaxed);

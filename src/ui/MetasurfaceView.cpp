@@ -7,10 +7,17 @@
 namespace acm::ui {
 namespace {
 
-constexpr float kSnapshotRadius = 9.0f;
-constexpr float kCursorRadius = 7.0f;
-constexpr float kControlsHeight = 96.0f;
-constexpr float kListWidth = 210.0f;
+// Base sizes at 100%; everything below multiplies by the theme's display scale
+// so the controls keep pace with the font inside them.
+constexpr float kSnapshotRadiusBase = 9.0f;
+constexpr float kCursorRadiusBase = 7.0f;
+constexpr float kControlsHeightBase = 104.0f;
+constexpr float kListWidthBase = 210.0f;
+
+float snapshotRadius() { return theme().scaled(kSnapshotRadiusBase); }
+float cursorRadius() { return theme().scaled(kCursorRadiusBase); }
+float controlsHeight() { return theme().scaled(kControlsHeightBase); }
+float listWidth() { return theme().scaled(kListWidthBase); }
 
 } // namespace
 
@@ -39,8 +46,8 @@ void MetasurfaceView::shutdown() {
 
 Rect MetasurfaceView::surfaceRect(const Rect& bounds) const {
     Rect area = bounds;
-    area.removeFromBottom(kControlsHeight);
-    area.removeFromRight(kListWidth);
+    area.removeFromBottom(controlsHeight());
+    area.removeFromRight(listWidth());
     area = area.deflated(theme().padding);
 
     // Keep the surface square: the interpolation is isotropic, so a stretched
@@ -152,20 +159,20 @@ void MetasurfaceView::drawSnapshots(Ui& ui, const Rect& surface) {
         const Colour colour = Colour::fromArgb(snapshot.colour);
         const bool isSelected = snapshot.id == selected_;
 
-        const Rect hitRect{ position.x - kSnapshotRadius, position.y - kSnapshotRadius,
-                            kSnapshotRadius * 2.0f, kSnapshotRadius * 2.0f };
+        const Rect hitRect{ position.x - snapshotRadius(), position.y - snapshotRadius(),
+                            snapshotRadius() * 2.0f, snapshotRadius() * 2.0f };
         const bool hovered = ui.hovering(hitRect);
 
         if (isSelected || hovered)
-            list.addGlow(hitRect, colour.withAlpha(0.6f), 10.0f, kSnapshotRadius, 4);
+            list.addGlow(hitRect, colour.withAlpha(0.6f), 10.0f, snapshotRadius(), 4);
 
-        list.addCircleFilled(position, kSnapshotRadius, t.panelSunken);
-        list.addCircleFilled(position, kSnapshotRadius - 2.5f, colour);
-        list.addCircle(position, kSnapshotRadius, isSelected ? t.text : colour.brightened(1.2f),
+        list.addCircleFilled(position, snapshotRadius(), t.panelSunken);
+        list.addCircleFilled(position, snapshotRadius() - 2.5f, colour);
+        list.addCircle(position, snapshotRadius(), isSelected ? t.text : colour.brightened(1.2f),
                        isSelected ? 2.0f : 1.3f);
 
         // Labels sit above the point so a cluster stays readable.
-        const Rect labelRect{ position.x - 60.0f, position.y - kSnapshotRadius - 15.0f,
+        const Rect labelRect{ position.x - 60.0f, position.y - snapshotRadius() - 15.0f,
                               120.0f, 13.0f };
         list.addTextClipped(ui.font(t.fontSmall), labelRect,
                             isSelected ? t.text : t.textDim, snapshot.name,
@@ -193,13 +200,13 @@ void MetasurfaceView::drawCursor(Ui& ui, const Rect& surface) {
     list.addRectFilled(Rect{ position.x - 0.5f, surface.top(), 1.0f, surface.height },
                        t.text.withAlpha(0.18f));
 
-    list.addCircle(position, kCursorRadius + 4.0f, t.text.withAlpha(0.35f), 1.0f);
-    list.addCircleFilled(position, kCursorRadius, t.background);
-    list.addCircle(position, kCursorRadius, t.text, 2.0f);
+    list.addCircle(position, cursorRadius() + 4.0f, t.text.withAlpha(0.35f), 1.0f);
+    list.addCircleFilled(position, cursorRadius(), t.background);
+    list.addCircle(position, cursorRadius(), t.text, 2.0f);
     list.addCircleFilled(position, 2.0f, t.text);
 
     if (metasurface_->recordingPath())
-        list.addCircle(position, kCursorRadius + 8.0f, t.recording, 1.8f);
+        list.addCircle(position, cursorRadius() + 8.0f, t.recording, 1.8f);
 }
 
 // ---------------------------------------------------------------------------
@@ -215,7 +222,7 @@ void MetasurfaceView::handleSurfaceInput(Ui& ui, const Rect& surface) {
         SnapshotId hit = kInvalidSnapshot;
         for (const Snapshot& snapshot : metasurface_->snapshots()) {
             const Vec2 position = surfaceToScreen(snapshot.position, surface);
-            if ((input.mousePosition - position).length() <= kSnapshotRadius + 3.0f) {
+            if ((input.mousePosition - position).length() <= snapshotRadius() + 3.0f) {
                 hit = snapshot.id;
                 break;
             }
@@ -271,7 +278,7 @@ void MetasurfaceView::handleSurfaceInput(Ui& ui, const Rect& surface) {
         // Right-click removes the snapshot under the pointer.
         for (const Snapshot& snapshot : metasurface_->snapshots()) {
             const Vec2 position = surfaceToScreen(snapshot.position, surface);
-            if ((input.mousePosition - position).length() <= kSnapshotRadius + 3.0f) {
+            if ((input.mousePosition - position).length() <= snapshotRadius() + 3.0f) {
                 metasurface_->remove(snapshot.id);
                 if (selected_ == snapshot.id) selected_ = kInvalidSnapshot;
                 fieldDirty_ = true;
@@ -302,13 +309,13 @@ void MetasurfaceView::drawControls(Ui& ui, const Rect& bounds) {
     const Theme& t = theme();
 
     Rect area = bounds;
-    area.removeFromRight(kListWidth);
-    Rect strip = area.removeFromBottom(kControlsHeight).deflated(t.padding);
+    area.removeFromRight(listWidth());
+    Rect strip = area.removeFromBottom(controlsHeight()).deflated(t.padding);
 
     // -- row one: capture and interpolation --------------------------------
-    Rect row = strip.removeFromTop(24.0f);
+    Rect row = strip.removeFromTop(t.scaled(24.0f));
 
-    if (ui.button(ui.id("meta.capture"), row.removeFromLeft(96.0f), "capture",
+    if (ui.button(ui.id("meta.capture"), row.removeFromLeft(t.scaled(96.0f)), "capture",
                   Ui::ButtonStyle::Primary))
         captureHere(metasurface_->cursor());
     if (ui.isHot(ui.id("meta.capture")))
@@ -317,7 +324,7 @@ void MetasurfaceView::drawControls(Ui& ui, const Rect& bounds) {
 
     const bool hasSelection = metasurface_->find(selected_) != nullptr;
 
-    if (ui.button(ui.id("meta.update"), row.removeFromLeft(74.0f), "update",
+    if (ui.button(ui.id("meta.update"), row.removeFromLeft(t.scaled(74.0f)), "update",
                   Ui::ButtonStyle::Normal, false, hasSelection)) {
         metasurface_->recapture(selected_, engine_->graph());
         fieldDirty_ = true;
@@ -325,7 +332,7 @@ void MetasurfaceView::drawControls(Ui& ui, const Rect& bounds) {
     }
     row.removeFromLeft(6.0f);
 
-    if (ui.button(ui.id("meta.remove"), row.removeFromLeft(70.0f), "remove",
+    if (ui.button(ui.id("meta.remove"), row.removeFromLeft(t.scaled(70.0f)), "remove",
                   Ui::ButtonStyle::Danger, false, hasSelection)) {
         metasurface_->remove(selected_);
         selected_ = kInvalidSnapshot;
@@ -334,7 +341,7 @@ void MetasurfaceView::drawControls(Ui& ui, const Rect& bounds) {
     row.removeFromLeft(16.0f);
 
     // Interpolation mode.
-    const Rect modeArea = row.removeFromLeft(150.0f);
+    const Rect modeArea = row.removeFromLeft(t.scaled(158.0f));
     static const std::vector<std::string> modes = { "inverse distance", "radial basis", "nearest" };
     int mode = static_cast<int>(metasurface_->mode());
     if (ui.combo(ui.id("meta.mode"), modeArea, modes, mode)) {
@@ -370,10 +377,10 @@ void MetasurfaceView::drawControls(Ui& ui, const Rect& bounds) {
     strip.removeFromTop(6.0f);
 
     // -- row two: path automation ------------------------------------------
-    Rect pathRow = strip.removeFromTop(24.0f);
+    Rect pathRow = strip.removeFromTop(t.scaled(24.0f));
 
     const bool recording = metasurface_->recordingPath();
-    if (ui.iconButton(ui.id("meta.pathrec"), pathRow.removeFromLeft(28.0f), Ui::Icon::Record,
+    if (ui.iconButton(ui.id("meta.pathrec"), pathRow.removeFromLeft(t.scaled(28.0f)), Ui::Icon::Record,
                       recording ? t.recording : t.textDim, recording)) {
         if (recording) metasurface_->endPathRecording();
         else { metasurface_->beginPathRecording(); pathClock_ = 0.0; }
@@ -383,19 +390,19 @@ void MetasurfaceView::drawControls(Ui& ui, const Rect& bounds) {
     pathRow.removeFromLeft(4.0f);
 
     const bool playing = metasurface_->pathPlaying();
-    if (ui.iconButton(ui.id("meta.pathplay"), pathRow.removeFromLeft(28.0f), Ui::Icon::Play,
+    if (ui.iconButton(ui.id("meta.pathplay"), pathRow.removeFromLeft(t.scaled(28.0f)), Ui::Icon::Play,
                       playing ? t.accent : t.textDim, playing,
                       metasurface_->path().size() >= 2))
         metasurface_->setPathPlaying(!playing);
     pathRow.removeFromLeft(4.0f);
 
-    if (ui.iconButton(ui.id("meta.pathclear"), pathRow.removeFromLeft(28.0f), Ui::Icon::Trash,
+    if (ui.iconButton(ui.id("meta.pathclear"), pathRow.removeFromLeft(t.scaled(28.0f)), Ui::Icon::Trash,
                       t.textDim, false, !metasurface_->path().empty()))
         metasurface_->clearPath();
     pathRow.removeFromLeft(12.0f);
 
     bool synced = metasurface_->pathSynced();
-    if (ui.checkbox(ui.id("meta.pathsync"), pathRow.removeFromLeft(90.0f), "sync", synced))
+    if (ui.checkbox(ui.id("meta.pathsync"), pathRow.removeFromLeft(t.scaled(90.0f)), "sync", synced))
         metasurface_->setPathSynced(synced);
     pathRow.removeFromLeft(6.0f);
 
@@ -415,17 +422,17 @@ void MetasurfaceView::drawSnapshotList(Ui& ui, const Rect& bounds) {
     const Theme& t = theme();
 
     Rect panel = bounds;
-    panel = panel.removeFromRight(kListWidth).deflated(t.padding);
+    panel = panel.removeFromRight(listWidth()).deflated(t.padding);
     ui.panel(panel);
     panel = panel.deflated(t.smallPadding);
 
-    ui.label(panel.removeFromTop(18.0f), "snapshots", t.textDim, t.fontUiBold);
+    ui.label(panel.removeFromTop(t.scaled(18.0f)), "snapshots", t.textDim, t.fontUiBold);
     panel.removeFromTop(4.0f);
 
     // Renaming the selected snapshot happens here rather than on the surface,
     // where a text field would be in the way of the gesture.
     if (selected_ != kInvalidSnapshot) {
-        const Rect nameRow = panel.removeFromTop(22.0f);
+        const Rect nameRow = panel.removeFromTop(t.scaled(22.0f));
         if (const Snapshot* snapshot = metasurface_->find(selected_)) {
             if (!renamingSelected_) renameBuffer_ = snapshot->name;
 
@@ -440,12 +447,12 @@ void MetasurfaceView::drawSnapshotList(Ui& ui, const Rect& bounds) {
     }
 
     const auto& snapshots = metasurface_->snapshots();
-    const float contentHeight = static_cast<float>(snapshots.size()) * 24.0f;
+    const float contentHeight = static_cast<float>(snapshots.size()) * t.scaled(24.0f);
 
     Rect content = ui.beginScroll(ui.id("meta.list"), panel, contentHeight);
 
     for (const Snapshot& snapshot : snapshots) {
-        const Rect row = content.removeFromTop(23.0f);
+        const Rect row = content.removeFromTop(t.scaled(23.0f));
         content.removeFromTop(1.0f);
 
         const bool isSelected = snapshot.id == selected_;

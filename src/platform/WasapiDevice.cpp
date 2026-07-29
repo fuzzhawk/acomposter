@@ -300,8 +300,11 @@ struct WasapiDevice::Impl {
 
     CaptureRing captureRing;
     std::vector<float> captureScratch;
-    std::vector<float> renderScratch;
+    std::vector<float> renderScratch;   // device layout, handed to WASAPI
+    std::vector<float> busScratch;      // what the engine renders into
     std::vector<float> inputScratch;
+    int busChannels = 2;
+    int channelOffset = 0;
 
     WasapiDevice::Callback callback;
     AudioDeviceStatus status;
@@ -415,11 +418,24 @@ bool WasapiDevice::open(const AudioDeviceSettings& settings, Callback callback) 
         return fail("could not obtain the output render service");
 
     impl_->status.sampleRate = impl_->renderFormat->nSamplesPerSec;
-    impl_->status.outputChannels = impl_->renderFormat->nChannels;
+    impl_->status.deviceOutputChannels = impl_->renderFormat->nChannels;
     impl_->status.blockSize = static_cast<int>(impl_->renderBufferFrames);
 
+    // Clamp the requested routing to what the endpoint actually has, so a patch
+    // saved against an 8-output interface still opens on a laptop's stereo jack.
+    const int deviceChannels = impl_->renderFormat->nChannels;
+    int busChannels = settings.outputChannelCount > 0 ? settings.outputChannelCount : deviceChannels;
+    busChannels = clampValue(busChannels, 1, deviceChannels);
+    int offset = clampValue(settings.outputChannelOffset, 0, std::max(0, deviceChannels - busChannels));
+
+    impl_->busChannels = busChannels;
+    impl_->channelOffset = offset;
+    impl_->status.outputChannels = busChannels;
+
     impl_->renderScratch.assign(static_cast<std::size_t>(impl_->renderBufferFrames)
-                                    * impl_->renderFormat->nChannels, 0.0f);
+                                    * static_cast<std::size_t>(deviceChannels), 0.0f);
+    impl_->busScratch.assign(static_cast<std::size_t>(impl_->renderBufferFrames)
+                                 * static_cast<std::size_t>(busChannels), 0.0f);
 
     // -- capture (optional) ------------------------------------------------
     if (settings.enableInput) {
@@ -550,8 +566,7 @@ void WasapiDevice::Impl::renderThreadMain() {
     DWORD taskIndex = 0;
     HANDLE task = ::AvSetMmThreadCharacteristicsW(L"Pro Audio", &taskIndex);
 
-    const int channels = renderFormat->nChannels;
-    const int inputChannels = std::max(1, status.inputChannels);
+    const int deviceChannels = renderFormat->nChannels;
 
     while (!stopRequested.load(std::memory_order_acquire)) {
         // A wait that expires means the device stopped feeding us; there is
@@ -576,19 +591,29 @@ void WasapiDevice::Impl::renderThreadMain() {
         if (callback) {
             callback(status.inputChannels > 0 ? inputScratch.data() : nullptr,
                      status.inputChannels,
-                     renderScratch.data(), channels, frames);
+                     busScratch.data(), busChannels, frames);
         } else {
-            std::memset(renderScratch.data(), 0,
-                        sizeof(float) * static_cast<std::size_t>(frames) * channels);
+            std::memset(busScratch.data(), 0,
+                        sizeof(float) * static_cast<std::size_t>(frames) * busChannels);
         }
 
-        convertFromFloat(renderScratch.data(), deviceBuffer, frames * channels, renderSampleFormat);
+        // Scatter the bus into the device's channels at the chosen offset. Every
+        // channel outside the target range is silenced, not left stale.
+        std::memset(renderScratch.data(), 0,
+                    sizeof(float) * static_cast<std::size_t>(frames) * deviceChannels);
+        for (int i = 0; i < frames; ++i) {
+            for (int c = 0; c < busChannels; ++c) {
+                renderScratch[static_cast<std::size_t>(i) * deviceChannels + channelOffset + c] =
+                    busScratch[static_cast<std::size_t>(i) * busChannels + c];
+            }
+        }
+
+        convertFromFloat(renderScratch.data(), deviceBuffer, frames * deviceChannels, renderSampleFormat);
         renderService->ReleaseBuffer(available, 0);
     }
 
     if (task) ::AvRevertMmThreadCharacteristics(task);
     ::CoUninitialize();
-    (void)inputChannels;
 }
 
 void WasapiDevice::Impl::captureThreadMain() {
@@ -644,9 +669,10 @@ std::string WasapiDevice::description() const {
 
     const AudioDeviceStatus& s = impl_->status;
     char buffer[256];
-    std::snprintf(buffer, sizeof(buffer), "%s  %.0f Hz  %d frames  %.1f ms  %d in / %d out",
+    std::snprintf(buffer, sizeof(buffer), "%s  %.0f Hz  %d frames  %.1f ms  %d in / %d out%s",
                   s.outputDeviceName.c_str(), s.sampleRate, s.blockSize,
-                  s.latencyMilliseconds, s.inputChannels, s.outputChannels);
+                  s.latencyMilliseconds, s.inputChannels, s.outputChannels,
+                  s.deviceOutputChannels > s.outputChannels ? "  (routed)" : "");
     return buffer;
 }
 

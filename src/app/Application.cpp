@@ -7,6 +7,7 @@
 #include "../nodes/SamplePlayerNode.h"
 #include "../platform/FileDialog.h"
 #include "../vst2/BridgedVst2Plugin.h"
+#include "../vst2/NativeVst2Plugin.h"
 #include "../vst2/VstNode.h"
 
 #include <algorithm>
@@ -79,6 +80,8 @@ bool Application::initialise() {
     browser_.initialise();
     inspector_.initialise(&engine_, &metasurface_);
     pluginView_.initialise(&plugins_);
+    settings_.initialise(&engine_, &deviceSettings_);
+    settings_.onApplyAudioSettings = [this] { restartAudioDevice(); };
     transportBar_.initialise(&engine_);
     statusBar_.initialise(&engine_, &plugins_);
 
@@ -105,12 +108,14 @@ bool Application::initialise() {
     transportBar_.onOpenPatch = [this] { openPatch(); };
     transportBar_.onSavePatch = [this] { savePatch(); };
     transportBar_.onSavePatchAs = [this] { savePatchAs(); };
+    transportBar_.onOpenSettings = [this] { settings_.open(); };
 
     window_.onResize = [this](int width, int height) { renderer_.resize(width, height); };
     window_.onCloseRequested = [this]() { return confirmDiscardChanges(); };
 
     // -- plugins -----------------------------------------------------------
     vst2::BridgedVst2Plugin::setHelperDirectory(paths::executableDirectory());
+    vst2::NativeVst2Plugin::setOwnerWindow(window_.handle());
     vst2::VstNode::setPluginManager(&plugins_);
 
     if (!plugins_.loadCache(paths::pluginCacheFile()))
@@ -152,6 +157,21 @@ bool Application::openAudioDevice() {
                     status.running ? std::max(status.outputChannels, 2) : 2);
 
     return opened;
+}
+
+void Application::restartAudioDevice() {
+    // Stop first: the callback must not be running while the graph is re-prepared.
+    device_.close();
+
+    if (openAudioDevice()) {
+        ui_.notify("audio device restarted", ui::theme().accent, 2.5f);
+    } else {
+        const std::string error = device_.status().error;
+        ui_.notify("could not open that device: " + (error.empty() ? "unknown error" : error),
+                   ui::theme().danger, 8.0f);
+    }
+
+    saveSettings();
 }
 
 void Application::shutdown() {
@@ -306,6 +326,12 @@ void Application::layout(float deltaSeconds) {
 
     statusBar_.render(ui_, statusArea, device_.description());
 
+    // Drawn over everything, and it takes the frame's input when open so a
+    // click meant for a combo inside it cannot also reach the canvas beneath.
+    settings_.render(ui_, Rect{ 0.0f, 0.0f, static_cast<float>(window_.width()),
+                                static_cast<float>(window_.height()) },
+                     device_.status());
+
     // The drag ghost follows the pointer above everything else.
     if (ui_.dragging()) {
         const std::string label = pathLeaf(ui_.dragPayload());
@@ -322,6 +348,11 @@ void Application::layout(float deltaSeconds) {
 
 void Application::handleGlobalShortcuts() {
     if (ui_.keyboardCaptured()) return;
+    // While the settings sheet is up it owns the keyboard, apart from Escape.
+    if (settings_.visible()) {
+        if (input_.keyPressed(ui::key::Escape)) settings_.close();
+        return;
+    }
 
     const ui::InputState& in = input_;
 
@@ -339,6 +370,9 @@ void Application::handleGlobalShortcuts() {
     if (in.keyPressed(ui::key::F1)) activeView_ = ui::MainView::Patch;
     if (in.keyPressed(ui::key::F1 + 1)) activeView_ = ui::MainView::Metasurface;
     if (in.keyPressed(ui::key::F1 + 2)) activeView_ = ui::MainView::Plugins;
+
+    // Ctrl+comma is the conventional settings shortcut on every platform.
+    if (in.ctrl && in.keyPressed(0xBC)) settings_.open();
 
     if (in.ctrl && in.keyPressed('1')) showBrowser_ = !showBrowser_;
     if (in.ctrl && in.keyPressed('2')) showInspector_ = !showInspector_;
@@ -516,6 +550,8 @@ void Application::loadSettings() {
         deviceSettings_.inputDeviceId = audio->getString("inputDeviceId");
         deviceSettings_.enableInput = audio->getBool("enableInput", true);
         deviceSettings_.blockSize = clampValue(audio->getInt("blockSize", 256), 32, 4096);
+        deviceSettings_.outputChannelCount = clampValue(audio->getInt("outputChannelCount", 0), 0, 32);
+        deviceSettings_.outputChannelOffset = clampValue(audio->getInt("outputChannelOffset", 0), 0, 31);
     }
 
     if (const JsonValue* interfaceSettings = root.find("interface")) {
@@ -542,6 +578,8 @@ void Application::saveSettings() const {
     audio.set("inputDeviceId", deviceSettings_.inputDeviceId);
     audio.set("enableInput", deviceSettings_.enableInput);
     audio.set("blockSize", deviceSettings_.blockSize);
+    audio.set("outputChannelCount", deviceSettings_.outputChannelCount);
+    audio.set("outputChannelOffset", deviceSettings_.outputChannelOffset);
     root.set("audio", audio);
 
     JsonValue interfaceSettings = JsonValue::object();

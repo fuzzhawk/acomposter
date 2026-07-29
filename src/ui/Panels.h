@@ -10,6 +10,7 @@
 #include "../core/Engine.h"
 #include "../core/FileIo.h"
 #include "../meta/Metasurface.h"
+#include "../platform/WasapiDevice.h"
 #include "../vst2/PluginManager.h"
 #include "Ui.h"
 
@@ -101,6 +102,50 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// Settings
+//
+// A modal panel rather than a separate OS window: the whole interface is
+// immediate mode, so an in-app sheet needs no second HWND, no second render
+// target and no second message loop, and it cannot end up behind the main
+// window on a multi-monitor rig.
+// ---------------------------------------------------------------------------
+
+class SettingsView {
+public:
+    void initialise(Engine* engine, platform::AudioDeviceSettings* settings);
+
+    void open();
+    void close() { visible_ = false; }
+    bool visible() const noexcept { return visible_; }
+
+    // Draws over `bounds` when open. Returns true if it consumed the frame's
+    // input, so the views underneath know to stay still.
+    bool render(Ui& ui, const Rect& bounds, const platform::AudioDeviceStatus& status);
+
+    // Raised when the user applies a change that needs the device reopening.
+    std::function<void()> onApplyAudioSettings;
+
+private:
+    void refreshDeviceLists();
+
+    Engine* engine_ = nullptr;
+    platform::AudioDeviceSettings* settings_ = nullptr;
+
+    bool visible_ = false;
+    bool deviceListsLoaded_ = false;
+
+    std::vector<platform::AudioDeviceInfo> outputDevices_;
+    std::vector<platform::AudioDeviceInfo> inputDevices_;
+    std::vector<std::string> outputNames_;
+    std::vector<std::string> inputNames_;
+
+    // Working copy; only written back to `settings_` when Apply is pressed, so
+    // a half-made choice never restarts the audio device mid-set.
+    platform::AudioDeviceSettings draft_;
+    bool dirty_ = false;
+};
+
+// ---------------------------------------------------------------------------
 // Transport bar
 // ---------------------------------------------------------------------------
 
@@ -120,6 +165,8 @@ public:
     std::function<void()> onSavePatch;
     std::function<void()> onSavePatchAs;
     std::function<void()> onOpenSettings;
+    // Drawn in the bar so the panel can be reached without a menu bar.
+    bool showSettingsButton = true;
 
     void setPatchName(std::string name) { patchName_ = std::move(name); }
     void setModified(bool modified) { modified_ = modified; }

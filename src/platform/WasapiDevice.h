@@ -34,6 +34,13 @@ struct AudioDeviceSettings {
     // Requested buffer size. WASAPI shared mode has its own period, so this is
     // the size acomposter processes in, not necessarily the device's.
     int blockSize = 256;
+
+    // How many channels the master bus renders, and where they land on the
+    // device. Zero means "match the device". Shared mode fixes the endpoint's
+    // own channel count, so this is a routing choice rather than a format one:
+    // it is what lets a 2-channel patch come out of outputs 3/4 of an interface.
+    int outputChannelCount = 0;
+    int outputChannelOffset = 0;
 };
 
 struct AudioDeviceStatus {
@@ -43,6 +50,8 @@ struct AudioDeviceStatus {
     int outputChannels = 0;
     int inputChannels = 0;
     double latencyMilliseconds = 0.0;
+    // What the endpoint itself offers, so the settings UI can bound the choice.
+    int deviceOutputChannels = 0;
     std::string outputDeviceName;
     std::string inputDeviceName;
     std::string error;

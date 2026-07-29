@@ -565,13 +565,272 @@ void PluginManagerView::render(Ui& ui, const Rect& bounds) {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// SettingsView
+// ---------------------------------------------------------------------------
+
+void SettingsView::initialise(Engine* engine, platform::AudioDeviceSettings* settings) {
+    engine_ = engine;
+    settings_ = settings;
+}
+
+void SettingsView::open() {
+    visible_ = true;
+    dirty_ = false;
+    if (settings_) draft_ = *settings_;
+    // Enumerating endpoints touches COM and can take a moment on a machine with
+    // a lot of interfaces, so it happens on open rather than every frame.
+    refreshDeviceLists();
+}
+
+void SettingsView::refreshDeviceLists() {
+    outputDevices_ = platform::WasapiDevice::outputDevices();
+    inputDevices_ = platform::WasapiDevice::inputDevices();
+
+    outputNames_.clear();
+    for (const auto& device : outputDevices_)
+        outputNames_.push_back(device.name + (device.isDefault ? "  (default)" : ""));
+
+    inputNames_.clear();
+    inputNames_.push_back("none");
+    for (const auto& device : inputDevices_)
+        inputNames_.push_back(device.name + (device.isDefault ? "  (default)" : ""));
+
+    deviceListsLoaded_ = true;
+}
+
+bool SettingsView::render(Ui& ui, const Rect& bounds, const platform::AudioDeviceStatus& status) {
+    if (!visible_ || !settings_) return false;
+
+    const Theme& t = theme();
+    DrawList& list = ui.draw();
+
+    // Scrim. Clicking it dismisses, which is what people try first.
+    list.addRectFilled(bounds, Colour{ 0.0f, 0.0f, 0.0f, 0.55f });
+    if (ui.hovering(bounds) && ui.input().mousePressed[static_cast<int>(MouseButton::Left)]) {
+        // Only outside the sheet; the sheet's own rect is tested below.
+    }
+
+    const float width = std::min(t.scaled(520.0f), bounds.width - t.scaled(40.0f));
+    const float height = std::min(t.scaled(460.0f), bounds.height - t.scaled(40.0f));
+    const Rect sheet{ bounds.centre().x - width * 0.5f, bounds.centre().y - height * 0.5f,
+                      width, height };
+
+    if (ui.input().mousePressed[static_cast<int>(MouseButton::Left)]
+        && !sheet.contains(ui.input().mousePosition)) {
+        close();
+        return true;
+    }
+
+    list.addRectFilled(sheet.translated({ 0.0f, 4.0f }), Colour{ 0.0f, 0.0f, 0.0f, 0.5f },
+                       t.cornerRadiusLarge);
+    list.addRectFilled(sheet, t.panelRaised, t.cornerRadiusLarge);
+    list.addRect(sheet, t.borderStrong, t.borderWidth, t.cornerRadiusLarge);
+
+    Rect area = sheet.deflated(t.padding * 1.5f);
+
+    // -- title -------------------------------------------------------------
+    Rect titleRow = area.removeFromTop(t.scaled(28.0f));
+    const Rect closeArea = titleRow.removeFromRight(t.scaled(24.0f));
+    ui.label(titleRow, "settings", t.text, t.fontTitle);
+    if (ui.iconButton(ui.id("settings.close"), closeArea, Ui::Icon::Cross, t.textDim)) {
+        close();
+        return true;
+    }
+    area.removeFromTop(t.scaled(6.0f));
+    ui.separator(area.removeFromTop(t.scaled(9.0f)));
+
+    const float rowHeight = t.scaled(26.0f);
+    const float labelWidth = t.scaled(140.0f);
+    const auto labelled = [&](Rect& region, const char* caption) {
+        Rect row = region.removeFromTop(rowHeight);
+        region.removeFromTop(t.scaled(6.0f));
+        ui.label(row.removeFromLeft(labelWidth), caption, t.textDim, t.fontUi);
+        return row;
+    };
+
+    // -- audio output ------------------------------------------------------
+    ui.label(area.removeFromTop(t.scaled(18.0f)), "audio output", t.accent, t.fontUiBold);
+    area.removeFromTop(t.scaled(4.0f));
+
+    {
+        Rect row = labelled(area, "device");
+
+        int selected = 0;
+        for (std::size_t i = 0; i < outputDevices_.size(); ++i) {
+            if (outputDevices_[i].id == draft_.outputDeviceId) { selected = static_cast<int>(i); break; }
+            if (draft_.outputDeviceId.empty() && outputDevices_[i].isDefault) selected = static_cast<int>(i);
+        }
+
+        if (outputNames_.empty()) {
+            ui.label(row, "no output devices found", t.danger, t.fontUi);
+        } else if (ui.combo(ui.id("settings.outdev"), row, outputNames_, selected)) {
+            draft_.outputDeviceId = outputDevices_[static_cast<std::size_t>(selected)].id;
+            // A different endpoint has its own channel count, so the routing
+            // offset from the previous one is meaningless.
+            draft_.outputChannelOffset = 0;
+            dirty_ = true;
+        }
+    }
+
+    {
+        // Channel count and first channel: the pair that decides where a stereo
+        // patch lands on a multi-output interface.
+        const int deviceChannels = std::max(2, status.deviceOutputChannels);
+
+        Rect row = labelled(area, "channels");
+        const Rect countArea = row.removeFromLeft(row.width * 0.46f);
+        row.removeFromLeft(t.scaled(8.0f));
+
+        std::vector<std::string> counts;
+        for (int c = 1; c <= deviceChannels; ++c)
+            counts.push_back(std::to_string(c) + (c == 1 ? " channel" : " channels"));
+
+        int countIndex = (draft_.outputChannelCount > 0 ? draft_.outputChannelCount : deviceChannels) - 1;
+        countIndex = clampValue(countIndex, 0, static_cast<int>(counts.size()) - 1);
+
+        if (ui.combo(ui.id("settings.outcount"), countArea, counts, countIndex)) {
+            draft_.outputChannelCount = countIndex + 1;
+            const int maximumOffset = std::max(0, deviceChannels - draft_.outputChannelCount);
+            draft_.outputChannelOffset = clampValue(draft_.outputChannelOffset, 0, maximumOffset);
+            dirty_ = true;
+        }
+
+        const int busChannels = draft_.outputChannelCount > 0 ? draft_.outputChannelCount : deviceChannels;
+        std::vector<std::string> offsets;
+        for (int c = 0; c + busChannels <= deviceChannels; ++c) {
+            offsets.push_back(busChannels == 1
+                ? ("out " + std::to_string(c + 1))
+                : ("out " + std::to_string(c + 1) + "-" + std::to_string(c + busChannels)));
+        }
+        if (offsets.empty()) offsets.push_back("out 1");
+
+        int offsetIndex = clampValue(draft_.outputChannelOffset, 0, static_cast<int>(offsets.size()) - 1);
+        if (ui.combo(ui.id("settings.outoffset"), row, offsets, offsetIndex)) {
+            draft_.outputChannelOffset = offsetIndex;
+            dirty_ = true;
+        }
+        if (ui.isHot(ui.id("settings.outoffset")))
+            ui.setTooltip("Which of the device's outputs the master bus is sent to");
+    }
+
+    area.removeFromTop(t.scaled(4.0f));
+    ui.separator(area.removeFromTop(t.scaled(9.0f)));
+
+    // -- audio input -------------------------------------------------------
+    ui.label(area.removeFromTop(t.scaled(18.0f)), "audio input", t.accent, t.fontUiBold);
+    area.removeFromTop(t.scaled(4.0f));
+
+    {
+        Rect row = labelled(area, "device");
+
+        int selected = 0;   // 0 = none
+        if (draft_.enableInput) {
+            for (std::size_t i = 0; i < inputDevices_.size(); ++i) {
+                if (inputDevices_[i].id == draft_.inputDeviceId) { selected = static_cast<int>(i) + 1; break; }
+                if (draft_.inputDeviceId.empty() && inputDevices_[i].isDefault) selected = static_cast<int>(i) + 1;
+            }
+        }
+
+        if (ui.combo(ui.id("settings.indev"), row, inputNames_, selected)) {
+            draft_.enableInput = selected > 0;
+            draft_.inputDeviceId = selected > 0
+                ? inputDevices_[static_cast<std::size_t>(selected - 1)].id
+                : std::string();
+            dirty_ = true;
+        }
+    }
+
+    area.removeFromTop(t.scaled(4.0f));
+    ui.separator(area.removeFromTop(t.scaled(9.0f)));
+
+    // -- buffer ------------------------------------------------------------
+    ui.label(area.removeFromTop(t.scaled(18.0f)), "buffer", t.accent, t.fontUiBold);
+    area.removeFromTop(t.scaled(4.0f));
+
+    {
+        Rect row = labelled(area, "size");
+
+        static const std::vector<int> sizes = { 64, 128, 256, 512, 1024, 2048 };
+        std::vector<std::string> labels;
+        for (int size : sizes) {
+            // Latency is the number that actually matters to a performer.
+            const double milliseconds = status.sampleRate > 0.0
+                ? 1000.0 * size / status.sampleRate : 0.0;
+            char text[64];
+            std::snprintf(text, sizeof(text), "%d frames  (%.1f ms)", size, milliseconds);
+            labels.push_back(text);
+        }
+
+        int index = 2;
+        for (std::size_t i = 0; i < sizes.size(); ++i)
+            if (sizes[i] == draft_.blockSize) index = static_cast<int>(i);
+
+        if (ui.combo(ui.id("settings.buffer"), row, labels, index)) {
+            draft_.blockSize = sizes[static_cast<std::size_t>(index)];
+            dirty_ = true;
+        }
+    }
+
+    // -- current state -----------------------------------------------------
+    area.removeFromTop(t.scaled(6.0f));
+    Rect statusRow = area.removeFromTop(t.scaled(34.0f));
+    list.addRectFilled(statusRow, t.panelSunken, t.cornerRadius);
+
+    const std::string summary = status.running
+        ? (status.outputDeviceName + "  -  " + std::to_string(static_cast<int>(status.sampleRate))
+           + " Hz, " + std::to_string(status.blockSize) + " frames")
+        : std::string("not running: ") + (status.error.empty() ? "no device" : status.error);
+
+    list.addTextClipped(ui.font(t.fontSmall), statusRow.deflated(t.scaled(8.0f)),
+                        status.running ? t.textDim : t.danger, summary);
+
+    // -- master ------------------------------------------------------------
+    area.removeFromTop(t.scaled(8.0f));
+    if (engine_) {
+        bool limiter = engine_->masterLimiterEnabled();
+        if (ui.checkbox(ui.id("settings.limiter"), area.removeFromTop(rowHeight),
+                        "master limiter", limiter))
+            engine_->setMasterLimiterEnabled(limiter);
+        if (ui.isHot(ui.id("settings.limiter")))
+            ui.setTooltip("A soft ceiling on the master bus. Leave this on unless you "
+                          "know why you want it off.");
+    }
+
+    // -- actions -----------------------------------------------------------
+    Rect actions = area.removeFromBottom(t.scaled(30.0f));
+    const Rect applyArea = actions.removeFromRight(t.scaled(110.0f));
+    actions.removeFromRight(t.scaled(8.0f));
+    const Rect cancelArea = actions.removeFromRight(t.scaled(90.0f));
+
+    if (ui.button(ui.id("settings.cancel"), cancelArea, "close")) {
+        close();
+        return true;
+    }
+
+    if (ui.button(ui.id("settings.apply"), applyArea, "apply",
+                  Ui::ButtonStyle::Primary, false, dirty_)) {
+        *settings_ = draft_;
+        dirty_ = false;
+        if (onApplyAudioSettings) onApplyAudioSettings();
+    }
+
+    if (dirty_) {
+        ui.label(actions, "restarts the audio device", t.warning, t.fontSmall,
+                 DrawList::Align::Right);
+    }
+
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // TransportBar
 // ---------------------------------------------------------------------------
 
 void TransportBar::initialise(Engine* engine) { engine_ = engine; }
 
-float TransportBar::height() { return 46.0f; }
+float TransportBar::height() { return theme().scaled(46.0f); }
 
 void TransportBar::render(Ui& ui, const Rect& bounds, MainView& activeView) {
     if (!engine_) return;
@@ -600,6 +859,12 @@ void TransportBar::render(Ui& ui, const Rect& bounds, MainView& activeView) {
     if (ui.iconButton(ui.id("bar.save"), area.removeFromLeft(buttonSize), Ui::Icon::Save, t.textDim))
         if (onSavePatch) onSavePatch();
     if (ui.isHot(ui.id("bar.save"))) ui.setTooltip("Save patch  (Ctrl+S)");
+
+    if (showSettingsButton
+        && ui.iconButton(ui.id("bar.settings"), area.removeFromLeft(buttonSize),
+                         Ui::Icon::Gear, t.textDim))
+        if (onOpenSettings) onOpenSettings();
+    if (ui.isHot(ui.id("bar.settings"))) ui.setTooltip("Audio settings  (Ctrl+,)");
 
     area.removeFromLeft(10.0f);
     ui.separator(area.removeFromLeft(1.0f), true);
@@ -727,7 +992,7 @@ void StatusBar::initialise(Engine* engine, vst2::PluginManager* plugins) {
     plugins_ = plugins;
 }
 
-float StatusBar::height() { return 22.0f; }
+float StatusBar::height() { return theme().scaled(22.0f); }
 
 void StatusBar::render(Ui& ui, const Rect& bounds, const std::string& deviceDescription) {
     if (!engine_) return;

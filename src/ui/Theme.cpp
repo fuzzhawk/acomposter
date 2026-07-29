@@ -36,6 +36,7 @@ void registerThemeFonts(gfx::FontAtlas& atlas, float uiScale) {
     Theme& t = theme();
 
     const float scale = clampValue(uiScale, 0.75f, 3.0f);
+    t.scale = scale;
 
     // Segoe UI is on every Windows 10 install; Consolas is the numeric face,
     // because parameter values in a proportional font jitter as they change.

@@ -64,6 +64,8 @@ private:
 
     // -- audio -------------------------------------------------------------
     bool openAudioDevice();
+    // Closes and reopens the device with the current settings, keeping the patch.
+    void restartAudioDevice();
 
     // -- plugins -----------------------------------------------------------
     void addPluginNode(const vst2::PluginDescription& description, bool forceBridge);
@@ -93,6 +95,7 @@ private:
     ui::BrowserView browser_;
     ui::InspectorView inspector_;
     ui::PluginManagerView pluginView_;
+    ui::SettingsView settings_;
     ui::TransportBar transportBar_;
     ui::StatusBar statusBar_;
 

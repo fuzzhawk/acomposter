@@ -72,6 +72,10 @@ public:
         return parametersChanged_.exchange(false, std::memory_order_acquire);
     }
 
+    // Plugin editors are owned by the main window so they stay above it rather
+    // than disappearing behind it with no way back.
+    static void setOwnerWindow(void* handle) noexcept { ownerWindow_ = handle; }
+
 private:
     friend VstIntPtr hostCallbackTrampoline(AEffect*, VstInt32, VstInt32, VstIntPtr, void*, float);
 
@@ -113,6 +117,10 @@ private:
     VstTimeInfo timeInfo_{};
 
     std::atomic<bool> parametersChanged_{ false };
+    // Set from the editor window's WM_CLOSE. The teardown has to happen outside
+    // the window procedure, so idle() acts on it.
+    std::atomic<bool> editorCloseRequested_{ false };
+    static void* ownerWindow_;
     mutable std::atomic<int> editorWidth_{ 0 };
     mutable std::atomic<int> editorHeight_{ 0 };
 };

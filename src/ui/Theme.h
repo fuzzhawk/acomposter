@@ -81,6 +81,13 @@ struct Theme {
     float nodeMinWidth       = 168.0f;
     float scrollBarWidth     = 10.0f;
 
+    // Display scale the fonts were rasterised at. Every structural dimension -
+    // bar heights, panel widths, row heights - has to be multiplied by this, or
+    // the text grows on a high-DPI display while its container does not and the
+    // labels clip. Use scaled() rather than reaching for raw pixel constants.
+    float scale = 1.0f;
+    float scaled(float pixels) const noexcept { return pixels * scale; }
+
     // -- fonts (indices into the atlas, filled in at start-up) -------------
     gfx::FontId fontUi = gfx::kInvalidFont;
     gfx::FontId fontUiBold = gfx::kInvalidFont;

@@ -102,9 +102,12 @@ void Ui::beginFrame(const InputState& input, Vec2 displaySize, float deltaSecond
     scrollStack_.clear();
     insidePopup_ = false;
 
-    // A release ends any capture, wherever the pointer ended up.
-    if (input_.mouseReleased[static_cast<int>(MouseButton::Left)])
-        active_ = kNoId;
+    // The capture is deliberately NOT cleared here. A widget only learns it has
+    // been clicked by seeing, on the release frame, that it is still the active
+    // control - so clearing it before the widgets run would eat every click
+    // whose press and release fell in different frames. That is nearly all of
+    // them: a human click is ~80 ms, which is five frames at 60 Hz. endFrame()
+    // clears it instead, once everyone has had their chance to see it.
 
     // Escape abandons text editing without committing.
     if (editing_ != kNoId && input_.keyPressed(key::Escape))
@@ -120,6 +123,12 @@ void Ui::beginFrame(const InputState& input, Vec2 displaySize, float deltaSecond
 }
 
 void Ui::endFrame() {
+    // Release the capture now that every widget has had a chance to claim the
+    // release. Anything still holding it either handled the click itself or has
+    // gone away; either way the pointer is free again.
+    if (input_.mouseReleased[static_cast<int>(MouseButton::Left)])
+        active_ = kNoId;
+
     // A click that reached no widget dismisses the popup.
     if (popupId_ != kNoId && !popupJustOpened_
         && (input_.mousePressed[static_cast<int>(MouseButton::Left)]
