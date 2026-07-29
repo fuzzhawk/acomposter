@@ -314,6 +314,7 @@ gfx::Rect Application::canvasBounds() const {
 
     area.removeFromTop(ui::TransportBar::height());
     area.removeFromBottom(ui::StatusBar::height());
+    if (showTimeline_) area.removeFromBottom(timelineHeight_);
     if (showBrowser_) area.removeFromLeft(browserWidth_);
     if (showInspector_) area.removeFromRight(inspectorWidth_);
 
@@ -341,6 +342,13 @@ void Application::layout(float deltaSeconds) {
     switch (activeView_) {
         case ui::MainView::Patch: {
             Rect area = full;
+
+            // Taken off the bottom before the side panels, so the timeline runs
+            // the full width the way an arrangement view has to.
+            if (showTimeline_) {
+                const Rect timelineArea = area.removeFromBottom(timelineHeight_);
+                drawTimelinePlaceholder(timelineArea);
+            }
 
             if (showBrowser_) {
                 const Rect browserArea = area.removeFromLeft(browserWidth_);
@@ -408,6 +416,48 @@ void Application::layout(float deltaSeconds) {
     (void)deltaSeconds;
 }
 
+
+void Application::drawTimelinePlaceholder(const gfx::Rect& bounds) {
+    const ui::Theme& t = ui::theme();
+    gfx::DrawList& list = ui_.draw();
+
+    list.addRectFilled(bounds, t.panel);
+    list.addRectFilled(gfx::Rect{ bounds.left(), bounds.top(), bounds.width, 1.0f }, t.border);
+
+    gfx::Rect area = bounds.deflated(t.smallPadding);
+    ui_.label(area.removeFromTop(16.0f), "timeline", t.textDim, t.fontUiBold);
+
+    // A live bar ruler, so the strip is not merely an empty rectangle: it already
+    // shows where the transport is, which is worth having on its own.
+    gfx::Rect ruler = area.removeFromTop(22.0f);
+    list.addRectFilled(ruler, t.canvas, t.cornerRadius);
+
+    const TransportState state = engine_.transport().snapshot();
+    const double beatsPerBar = static_cast<double>(std::max(1, state.timeSigNumerator));
+    const double barsAcross = 32.0;
+    const float barWidth = ruler.width / static_cast<float>(barsAcross);
+
+    for (int bar = 0; bar <= static_cast<int>(barsAcross); ++bar) {
+        const float x = ruler.left() + barWidth * static_cast<float>(bar);
+        const bool major = (bar % 4) == 0;
+        list.addRectFilled(gfx::Rect{ x, ruler.top(), 1.0f, major ? ruler.height : ruler.height * 0.4f },
+                           major ? t.border : t.border.withAlpha(0.4f));
+        if (major && barWidth > 12.0f) {
+            list.addTextClipped(ui_.font(t.fontSmall),
+                                gfx::Rect{ x + 3.0f, ruler.top(), barWidth, 12.0f },
+                                t.textFaint, std::to_string(bar + 1));
+        }
+    }
+
+    const double currentBar = std::fmod(state.ppqPosition / beatsPerBar, barsAcross);
+    const float playheadX = ruler.left() + barWidth * static_cast<float>(currentBar);
+    list.addRectFilled(gfx::Rect{ playheadX - 1.0f, ruler.top(), 2.0f, ruler.height }, t.accent);
+
+    list.addTextClipped(ui_.font(t.fontSmall), area, t.textFaint,
+                        "arrangement lanes go here - Ctrl+3 to hide",
+                        gfx::DrawList::Align::Centre);
+}
+
 void Application::handleGlobalShortcuts() {
     if (ui_.keyboardCaptured()) return;
     // While the settings sheet is up it owns the keyboard, apart from Escape.
@@ -438,6 +488,7 @@ void Application::handleGlobalShortcuts() {
 
     if (in.ctrl && in.keyPressed('1')) showBrowser_ = !showBrowser_;
     if (in.ctrl && in.keyPressed('2')) showInspector_ = !showInspector_;
+    if (in.ctrl && in.keyPressed('3')) showTimeline_ = !showTimeline_;
 
     // The metasurface is worth reaching without changing view: capture a
     // snapshot from anywhere.
@@ -620,6 +671,9 @@ void Application::loadSettings() {
         inspectorWidth_ = clampValue(interfaceSettings->getFloat("inspectorWidth", 280.0f), 200.0f, 560.0f);
         showBrowser_ = interfaceSettings->getBool("showBrowser", true);
         showInspector_ = interfaceSettings->getBool("showInspector", true);
+        showTimeline_ = interfaceSettings->getBool("showTimeline", false);
+        timelineHeight_ = clampValue(interfaceSettings->getFloat("timelineHeight", 150.0f),
+                                     80.0f, 460.0f);
         vsync_ = interfaceSettings->getBool("vsync", true);
 
         // Where the sample library is does not change between sessions, and
@@ -655,6 +709,8 @@ void Application::saveSettings() const {
     interfaceSettings.set("inspectorWidth", inspectorWidth_);
     interfaceSettings.set("showBrowser", showBrowser_);
     interfaceSettings.set("showInspector", showInspector_);
+    interfaceSettings.set("showTimeline", showTimeline_);
+    interfaceSettings.set("timelineHeight", timelineHeight_);
     interfaceSettings.set("vsync", vsync_);
     interfaceSettings.set("browserDirectory", browser_.currentDirectory());
     root.set("interface", interfaceSettings);

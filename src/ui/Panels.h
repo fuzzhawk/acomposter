@@ -73,6 +73,12 @@ public:
 private:
     void drawParameterList(Ui& ui, Rect area, Node& node);
     void drawPluginSection(Ui& ui, Rect& area, Node& node);
+    // The section list is the stem player's real editor: it is the only place
+    // sections can be created, so it lives where there is room for it rather
+    // than crammed into the node body.
+    void drawStemSection(Ui& ui, Rect& area, Node& node);
+    void drawBuildSection(Ui& ui, Rect& area, Node& node);
+    void drawColorSection(Ui& ui, Rect& area, Node& node);
 
     Engine* engine_ = nullptr;
     Metasurface* metasurface_ = nullptr;
@@ -81,6 +87,10 @@ private:
     NodeId nameBufferFor_ = kInvalidNode;
     std::string commentBuffer_;
     NodeId commentBufferFor_ = kInvalidNode;
+
+    // Which section row is open for editing, and its edit buffer.
+    int editingSection_ = -1;
+    std::string sectionNameBuffer_;
 };
 
 // ---------------------------------------------------------------------------

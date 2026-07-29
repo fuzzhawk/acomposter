@@ -112,6 +112,56 @@ pitch while everything else morphs around it. And the cursor's movement can be
 recorded and replayed, optionally locked to the transport so a gesture repeats
 every N beats forever.
 
+### Stem player
+
+Load a song's stems, mark it up into named sections by bar, and perform it.
+Every stem is the whole song; a section is a bar range into it. Looping one
+means reading each stem at that range while the transport runs underneath, so
+the loop is derived from the grid rather than accumulated and cannot drift
+however long the set runs.
+
+Asking for another section queues it. The current loop plays out and the change
+lands on the boundary, so you commit to the next section whenever you notice you
+want it and it arrives in time - the AudioMulch behaviour, rather than a clip
+launcher that cuts. Launch quantise can be relaxed to the next bar, the next
+beat, or immediate. The section parameter is stepped, so a metasurface blend
+snaps to a section instead of trying to average two.
+
+Eight stems, sixteen sections, one stereo output per stem plus a summed pair.
+
+### Colour
+
+One knob that moves a whole effect chain between two captured states, through an
+untouched middle. Red is tight, dry and low-heavy; blue is washed out,
+high-passed and long-tailed; dead centre is the chain doing nothing.
+
+The middle is a separately captured neutral, not the average of the two ends, so
+a colour of zero is audibly unchanged whatever the ends are - which is what makes
+the knob safe to leave alone mid-set - and an asymmetric preset still passes
+through the sound the track actually has.
+
+It drives plugins rather than containing them. Point it at a chain, adopt the
+parameters you care about, dial each end by ear and press "set red" or "set
+blue". Targets are discovered from whatever the plugin reports and presets
+re-bind by name, reporting what they could not find rather than pointing at the
+wrong control.
+
+**On the four named plugins.** There is deliberately no hard-coded parameter map
+for FabFilter Volcano, Pro-Q, FXpansion Bloom or 2CAudio Aether. None of them
+publish a stable index map and several do not have one: Pro-Q exposes bands as
+they are created, Volcano's modulation slots move with the routing, Bloom's
+matrix is user-built. An index list would be wrong for a different band count
+and would break silently on the next update, writing a reverb's decay into its
+mix control in the middle of a set. Capturing the ends from the plugin's own
+interface works with any of them, and keeps working.
+
+### Build
+
+A momentary switch that takes a section apart. Held, it shortens the stem loop
+step by step, runs a riser, pushes the colour toward blue and drops the low end.
+Released, it returns on the next grid line rather than instantly, so letting go
+slightly early still lands the drop in time.
+
 ### Audio output
 
 WASAPI or ASIO, chosen in settings (`Ctrl+,`).
@@ -154,7 +204,7 @@ AIFF onto the canvas, or onto an existing player to replace its file.
 | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` | new / open / save patch |
 | `Ctrl+R` | capture a metasurface snapshot at the cursor |
 | `F1` `F2` `F3` | patch / metasurface / plugins |
-| `Ctrl+1` `Ctrl+2` | toggle the browser and inspector |
+| `Ctrl+1` `Ctrl+2` `Ctrl+3` | toggle the browser, inspector and timeline |
 | `Delete` | delete the selection |
 | `Ctrl+D` | duplicate |
 | `B` | bypass the selection |
@@ -248,11 +298,11 @@ plugin bridge actually work.
 
 ## Status
 
-Version 0.1.2. Everything described above is implemented, and the binaries build
+Version 0.1.3. Everything described above is implemented, and the binaries build
 clean under both MSVC and mingw-w64 with warnings as errors.
 
-The engine, codecs, metasurface and patch format are covered by 470 checks that
-run on the build host. The interface, the patcher, the file browser, drag and
+The engine, codecs, metasurface, patch format, section launching and colour
+interpolation are covered by 496 checks that run on the build host. The interface, the patcher, the file browser, drag and
 drop, and VST2 scanning and instantiation have been driven end to end against
 the real binary. WASAPI has been exercised on hardware.
 
@@ -261,3 +311,7 @@ specification and its structure layouts are pinned by `static_assert`, but no
 interface has been in front of it. If it misbehaves, the driver name, its
 reported channel count and sample format, and what the status bar says are the
 useful things to report.
+
+The strip along the bottom of the patch view (`Ctrl+3`) is reserved for the
+arrangement timeline and currently holds only a live bar ruler. It is laid out
+now so the canvas, drop hit-testing and saved layout already account for it.

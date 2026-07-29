@@ -205,6 +205,11 @@ public:
                          bool showLabel = true);
     bool parameterToggle(const Rect& rect, Parameter& parameter, const Colour& fill);
     bool parameterChoice(const Rect& rect, Parameter& parameter);
+
+    // A bare integer field, dragged horizontally or typed into. Used for things
+    // that are not node parameters - bar numbers, counts - and so cannot go
+    // through the parameter widgets.
+    bool intField(UiId control, const Rect& rect, int& value, int lo, int hi);
     // One row: name on the left, an editable value on the right.
     bool parameterRow(const Rect& rect, Parameter& parameter, const Colour& fill);
 
@@ -320,6 +325,8 @@ private:
     Rect popupRect_;
     bool popupJustOpened_ = false;
     bool insidePopup_ = false;
+    // Sub-step remainder while an integer field is being dragged.
+    float dragAccumulator_ = 0.0f;
     bool modalActive_ = false;
     bool insideModal_ = false;
 

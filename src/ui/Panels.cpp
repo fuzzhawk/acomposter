@@ -4,6 +4,9 @@
 #include "../core/AppPaths.h"
 #include "../core/FileIo.h"
 #include "../patch/Patch.h"
+#include "../nodes/BuildNode.h"
+#include "../nodes/ColorNode.h"
+#include "../nodes/StemPlayerNode.h"
 #include "../vst2/VstNode.h"
 
 #include <algorithm>
@@ -356,6 +359,226 @@ void InspectorView::drawParameterList(Ui& ui, Rect area, Node& node) {
     ui.endScroll();
 }
 
+
+void InspectorView::drawStemSection(Ui& ui, Rect& area, Node& node) {
+    auto* stems = dynamic_cast<StemPlayerNode*>(&node);
+    if (!stems) return;
+
+    const Theme& t = theme();
+
+    ui.separator(area.removeFromTop(9.0f));
+    Rect header = area.removeFromTop(18.0f);
+    ui.label(header.removeFromLeft(90.0f), "sections", t.textDim, t.fontUiBold);
+
+    if (ui.button(ui.id("inspector.section.add"), header.removeFromRight(52.0f), "add",
+                  Ui::ButtonStyle::Normal, false, stems->sectionCount() < kMaxSections)) {
+        // A new section starts where the last one ends, which is almost always
+        // what is wanted when marking a song up in order.
+        StemSection section;
+        if (stems->sectionCount() > 0) {
+            const StemSection& last = stems->sections().back();
+            section.startBar = last.startBar + last.lengthBars;
+            section.lengthBars = last.lengthBars;
+        }
+        section.name = "section " + std::to_string(stems->sectionCount() + 1);
+        section.hue = static_cast<float>(stems->sectionCount()) * 0.13f;
+        stems->addSection(section);
+    }
+
+    area.removeFromTop(3.0f);
+
+    for (int i = 0; i < stems->sectionCount(); ++i) {
+        if (area.height < 60.0f) break;
+
+        const StemSection& section = stems->sections()[static_cast<std::size_t>(i)];
+        StemSection edited = section;
+
+        Rect row = area.removeFromTop(20.0f);
+        const bool isActive = i == stems->activeSection();
+
+        if (isActive)
+            ui.draw().addRectFilled(row, t.accent.withAlpha(0.10f), t.cornerRadius);
+
+        const Rect removeArea = row.removeFromRight(20.0f);
+        if (ui.iconButton(ui.idFrom(&node, 700 + i), removeArea, Ui::Icon::Cross, t.textFaint)) {
+            stems->removeSection(i);
+            break;   // the list moved underneath us
+        }
+
+        const Rect playArea = row.removeFromRight(22.0f);
+        if (ui.iconButton(ui.idFrom(&node, 730 + i), playArea, Ui::Icon::Play,
+                          isActive ? t.accent : t.textDim))
+            stems->requestSection(i);
+
+        // Name, editable in place.
+        if (editingSection_ != i) {
+            bool hovered = false, held = false;
+            if (ui.buttonBehaviour(ui.idFrom(&node, 760 + i), row, hovered, held)) {
+                editingSection_ = i;
+                sectionNameBuffer_ = section.name;
+            }
+            ui.draw().addTextClipped(ui.font(t.fontUi), row, isActive ? t.text : t.textDim,
+                                     section.name);
+        } else {
+            if (ui.textField(ui.idFrom(&node, 790 + i), row, sectionNameBuffer_)) {
+                edited.name = sectionNameBuffer_;
+                stems->updateSection(i, edited);
+                editingSection_ = -1;
+            }
+        }
+
+        // Bars.
+        Rect barRow = area.removeFromTop(18.0f);
+        ui.label(barRow.removeFromLeft(28.0f), "bar", t.textFaint, t.fontSmall);
+
+        int startBar = section.startBar;
+        if (ui.intField(ui.idFrom(&node, 820 + i), barRow.removeFromLeft(52.0f), startBar, 0, 4096)) {
+            edited.startBar = startBar;
+            stems->updateSection(i, edited);
+        }
+
+        barRow.removeFromLeft(6.0f);
+        ui.label(barRow.removeFromLeft(30.0f), "len", t.textFaint, t.fontSmall);
+
+        int lengthBars = section.lengthBars;
+        if (ui.intField(ui.idFrom(&node, 850 + i), barRow.removeFromLeft(52.0f), lengthBars, 1, 512)) {
+            edited.lengthBars = lengthBars;
+            stems->updateSection(i, edited);
+        }
+
+        area.removeFromTop(3.0f);
+    }
+
+    if (stems->sectionCount() == 0) {
+        ui.draw().addTextClipped(ui.font(t.fontSmall), area.removeFromTop(28.0f), t.textFaint,
+                                 "no sections yet - the whole song loops");
+    }
+}
+
+void InspectorView::drawColorSection(Ui& ui, Rect& area, Node& node) {
+    auto* color = dynamic_cast<ColorNode*>(&node);
+    if (!color || !engine_) return;
+
+    const Theme& t = theme();
+
+    ui.separator(area.removeFromTop(9.0f));
+    Rect header = area.removeFromTop(18.0f);
+    ui.label(header.removeFromLeft(90.0f), "colour targets", t.textDim, t.fontUiBold);
+
+    char count[48];
+    std::snprintf(count, sizeof(count), "%d", static_cast<int>(color->targets().size()));
+    ui.label(header, count, t.textFaint, t.fontSmall, DrawList::Align::Right);
+
+    area.removeFromTop(3.0f);
+
+    // Adopting a whole node is how a chain gets set up: pick the plugin, take
+    // every parameter it has, then capture the two ends by ear and prune.
+    Rect adoptRow = area.removeFromTop(20.0f);
+    ui.label(adoptRow.removeFromLeft(46.0f), "adopt", t.textFaint, t.fontSmall);
+
+    std::vector<std::string> names;
+    std::vector<NodeId> ids;
+    for (const auto& candidate : engine_->graph().nodes()) {
+        if (candidate->id() == node.id()) continue;
+        if (candidate->numParameters() == 0) continue;
+        names.push_back(candidate->name());
+        ids.push_back(candidate->id());
+    }
+
+    if (names.empty()) {
+        ui.label(adoptRow, "nothing to drive yet", t.textFaint, t.fontSmall);
+    } else {
+        int chosen = -1;
+        if (ui.combo(ui.id("inspector.color.adopt"), adoptRow, names, chosen)
+            && chosen >= 0 && chosen < static_cast<int>(ids.size())) {
+            const int added = color->adoptNode(ids[static_cast<std::size_t>(chosen)],
+                                               engine_->graph());
+            ui.notify(std::to_string(added) + " parameters added", t.accent, 2.0f);
+        }
+    }
+
+    area.removeFromTop(3.0f);
+
+    for (int i = 0; i < static_cast<int>(color->targets().size()); ++i) {
+        if (area.height < 40.0f) break;
+
+        const ColorTarget& target = color->targets()[static_cast<std::size_t>(i)];
+        Rect row = area.removeFromTop(17.0f);
+
+        const Rect removeArea = row.removeFromRight(18.0f);
+        if (ui.iconButton(ui.idFrom(&node, 900 + i), removeArea, Ui::Icon::Cross, t.textFaint)) {
+            color->removeTarget(i);
+            break;
+        }
+
+        // How far this target actually travels, drawn as a bar - a target whose
+        // ends are identical does nothing, and that should be visible without
+        // opening it.
+        const Rect travelArea = row.removeFromRight(40.0f).deflated(2.0f);
+        const float travel = std::max(std::abs(target.redValue - target.neutralValue),
+                                      std::abs(target.blueValue - target.neutralValue));
+        ui.draw().addRectFilled(travelArea, t.widgetTrack, 2.0f);
+        if (travel > 0.001f) {
+            ui.draw().addRectFilled(Rect{ travelArea.left(), travelArea.top(),
+                                          travelArea.width * clampValue(travel, 0.0f, 1.0f),
+                                          travelArea.height }, t.accentDim, 2.0f);
+        }
+
+        const std::string label = target.nodeName + " / " + target.paramName;
+        ui.draw().addTextClipped(ui.font(t.fontSmall), row,
+                                 travel > 0.001f ? t.textDim : t.textFaint, label);
+        if (ui.hovering(row)) ui.setTooltip(label);
+    }
+}
+
+void InspectorView::drawBuildSection(Ui& ui, Rect& area, Node& node) {
+    auto* build = dynamic_cast<BuildNode*>(&node);
+    if (!build || !engine_) return;
+
+    const Theme& t = theme();
+
+    ui.separator(area.removeFromTop(9.0f));
+    ui.label(area.removeFromTop(18.0f), "build targets", t.textDim, t.fontUiBold);
+    area.removeFromTop(3.0f);
+
+    // Two pickers, one per kind of target. Listing only the nodes that can
+    // actually be driven means a wrong choice is not possible.
+    const auto picker = [&](const char* caption, const char* typeName, NodeId current,
+                            const std::function<void(NodeId)>& assign) {
+        Rect row = area.removeFromTop(20.0f);
+        ui.label(row.removeFromLeft(52.0f), caption, t.textFaint, t.fontSmall);
+
+        std::vector<std::string> names{ "none" };
+        std::vector<NodeId> ids{ kInvalidNode };
+        int selected = 0;
+
+        for (const auto& candidate : engine_->graph().nodes()) {
+            if (candidate->typeName() != typeName) continue;
+            if (candidate->id() == current) selected = static_cast<int>(ids.size());
+            names.push_back(candidate->name());
+            ids.push_back(candidate->id());
+        }
+
+        if (ui.combo(ui.idFrom(&node, 950 + static_cast<int>(names.size())), row, names, selected)
+            && selected >= 0 && selected < static_cast<int>(ids.size()))
+            assign(ids[static_cast<std::size_t>(selected)]);
+
+        area.removeFromTop(3.0f);
+    };
+
+    picker("stems", "stem.player", build->stemPlayer(),
+           [build](NodeId id) { build->setStemPlayer(id); });
+    picker("colour", "color", build->colorNode(),
+           [build](NodeId id) { build->setColorNode(id); });
+
+    Rect riserRow = area.removeFromTop(18.0f);
+    ui.label(riserRow.removeFromLeft(52.0f), "riser", t.textFaint, t.fontSmall);
+    ui.draw().addTextClipped(ui.font(t.fontSmall), riserRow,
+                             build->riserPath().empty() ? t.textFaint : t.textDim,
+                             build->riserPath().empty() ? "drop an audio file on the node"
+                                                        : pathLeaf(build->riserPath()));
+}
+
 void InspectorView::render(Ui& ui, const Rect& bounds, NodeId nodeId) {
     const Theme& t = theme();
 
@@ -407,6 +630,9 @@ void InspectorView::render(Ui& ui, const Rect& bounds, NodeId nodeId) {
     }
 
     drawPluginSection(ui, area, *node);
+    drawStemSection(ui, area, *node);
+    drawColorSection(ui, area, *node);
+    drawBuildSection(ui, area, *node);
 
     // -- comment -----------------------------------------------------------
     ui.separator(area.removeFromTop(9.0f));

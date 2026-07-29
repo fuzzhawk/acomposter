@@ -124,6 +124,15 @@ private:
     bool showBrowser_ = true;
     bool showInspector_ = true;
 
+    // Reserved strip along the bottom of the patch view for the arrangement
+    // timeline. Nothing draws into it yet beyond its own ruler; it is laid out
+    // now so that the canvas, the drop hit-testing and the saved layout all
+    // already account for it, and turning it on later is not a change to any of
+    // them.
+    float timelineHeight_ = 150.0f;
+    bool showTimeline_ = false;
+    void drawTimelinePlaceholder(const gfx::Rect& bounds);
+
     bool vsync_ = true;
     bool initialised_ = false;
 };

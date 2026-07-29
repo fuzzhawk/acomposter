@@ -101,6 +101,9 @@ private:
     void drawNode(Ui& ui, Node& node, const Rect& bounds);
     void drawNodeBody(Ui& ui, Node& node, const Rect& body);
     void drawSamplePlayerBody(Ui& ui, Node& node, const Rect& body);
+    void drawStemPlayerBody(Ui& ui, Node& node, const Rect& body);
+    void drawColorBody(Ui& ui, Node& node, const Rect& body);
+    void drawBuildBody(Ui& ui, Node& node, const Rect& body);
     void drawLooperBody(Ui& ui, Node& node, const Rect& body);
     void drawMixerBody(Ui& ui, Node& node, const Rect& body);
     void drawCrossfaderBody(Ui& ui, Node& node, const Rect& body);

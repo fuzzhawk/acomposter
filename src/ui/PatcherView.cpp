@@ -6,7 +6,10 @@
 #include "../nodes/LooperNode.h"
 #include "../nodes/MixerNode.h"
 #include "../nodes/NodeFactory.h"
+#include "../nodes/BuildNode.h"
+#include "../nodes/ColorNode.h"
 #include "../nodes/SamplePlayerNode.h"
+#include "../nodes/StemPlayerNode.h"
 #include "../vst2/PluginManager.h"
 #include "../vst2/VstNode.h"
 
@@ -118,6 +121,10 @@ float PatcherView::nodeWidth(const Node& node) const {
     if (node.canvasWidth > 0.0f) return node.canvasWidth;
 
     if (node.typeName() == "sample.player" || node.typeName() == "looper") return 230.0f;
+    // Wide enough for a row of section buttons and a column of stem strips.
+    if (node.typeName() == "stem.player") return 340.0f;
+    if (node.typeName() == "color") return 260.0f;
+    if (node.typeName() == "build") return 220.0f;
     if (node.typeName().rfind("mixer.", 0) == 0) {
         const auto* mixer = static_cast<const MixerNode*>(&node);
         return clampValue(46.0f * static_cast<float>(mixer->channelCount()) + 20.0f, 180.0f, 780.0f);
@@ -138,6 +145,9 @@ float PatcherView::nodeHeight(const Node& node) const {
     const std::string& type = node.typeName();
 
     if (type == "sample.player") bodyHeight = 128.0f;
+    else if (type == "stem.player") bodyHeight = 268.0f;
+    else if (type == "color") bodyHeight = 132.0f;
+    else if (type == "build") bodyHeight = 116.0f;
     else if (type == "looper") bodyHeight = 116.0f;
     else if (type == "crossfader") bodyHeight = 92.0f;
     else if (type.rfind("mixer.", 0) == 0) bodyHeight = 132.0f;
@@ -382,11 +392,46 @@ bool PatcherView::handleFileDrop(const std::string& utf8Path, Vec2 screenPositio
     const Vec2 world = screenToWorld(screenPosition, bounds);
 
     for (const auto& node : engine_->graph().nodes()) {
-        if (node->typeName() != "sample.player") continue;
-        if (!nodeBounds(*node, bounds).contains(screenPosition)) continue;
+        const Rect box = nodeBounds(*node, bounds);
+        if (!box.contains(screenPosition)) continue;
 
-        auto* player = static_cast<SamplePlayerNode*>(node.get());
-        return player->loadFile(utf8Path, nullptr);
+        if (node->typeName() == "sample.player") {
+            auto* player = static_cast<SamplePlayerNode*>(node.get());
+            return player->loadFile(utf8Path, nullptr);
+        }
+
+        // A stem player has eight slots stacked down its body, so which one was
+        // hit has to come from where in the node the pointer landed. The strips
+        // are the bottom of the body, laid out by drawStemPlayerBody.
+        if (node->typeName() == "stem.player") {
+            auto* player = static_cast<StemPlayerNode*>(node.get());
+
+            const float scale = zoom_;
+            const float bodyTop = box.top() + theme().nodeHeaderHeight * scale;
+            // Section grid, launch row and the gaps above the strips.
+            const float stripsTop = bodyTop + (76.0f + 4.0f + 18.0f + 4.0f) * scale;
+            const float stripHeight = 17.0f * scale;
+
+            int slot = 0;
+            if (screenPosition.y > stripsTop && stripHeight > 0.0f)
+                slot = static_cast<int>((screenPosition.y - stripsTop) / stripHeight);
+
+            // Dropping anywhere above the strips fills the first free slot,
+            // which is what happens when several files are dragged in at once.
+            if (screenPosition.y <= stripsTop) {
+                slot = 0;
+                for (int i = 0; i < kMaxStems; ++i) {
+                    if (!player->stemLoaded(i)) { slot = i; break; }
+                }
+            }
+
+            return player->loadStem(clampValue(slot, 0, kMaxStems - 1), utf8Path, nullptr);
+        }
+
+        if (node->typeName() == "build") {
+            auto* build = static_cast<BuildNode*>(node.get());
+            return build->loadRiser(utf8Path, nullptr);
+        }
     }
 
     auto player = std::make_unique<SamplePlayerNode>();
@@ -655,6 +700,9 @@ void PatcherView::drawNodeBody(Ui& ui, Node& node, const Rect& body) {
     const std::string& type = node.typeName();
 
     if (type == "sample.player") { drawSamplePlayerBody(ui, node, body); return; }
+    if (type == "stem.player") { drawStemPlayerBody(ui, node, body); return; }
+    if (type == "color") { drawColorBody(ui, node, body); return; }
+    if (type == "build") { drawBuildBody(ui, node, body); return; }
     if (type == "looper") { drawLooperBody(ui, node, body); return; }
     if (type == "crossfader") { drawCrossfaderBody(ui, node, body); return; }
     if (type.rfind("mixer.", 0) == 0) { drawMixerBody(ui, node, body); return; }
@@ -877,6 +925,288 @@ void PatcherView::drawCrossfaderBody(Ui& ui, Node& node, const Rect& body) {
     if (area.height >= 16.0f) {
         Rect curveRow = area.removeFromTop(18.0f);
         ui.parameterChoice(curveRow, node.parameter(node.indexOfParameter("curve")));
+    }
+}
+
+
+void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
+    const Theme& t = theme();
+    DrawList& list = ui.draw();
+    auto& stems = static_cast<StemPlayerNode&>(node);
+
+    Rect area = body;
+
+    // -- sections ----------------------------------------------------------
+    // The grid is the instrument. It is drawn first and given the most room,
+    // because during a set this is the only part of the node anyone touches.
+    const int count = stems.sectionCount();
+    const int active = stems.activeSection();
+    const int pending = stems.pendingSection();
+
+    Rect sectionArea = area.removeFromTop(76.0f);
+    list.addRectFilled(sectionArea, t.canvas.brightened(1.08f), t.cornerRadius);
+
+    if (count == 0) {
+        list.addTextClipped(ui.font(t.fontSmall), sectionArea, t.textFaint,
+                            "no sections - add them in the inspector",
+                            DrawList::Align::Centre);
+    } else {
+        // Four to a row, which fits a sixteen-section song in the node without
+        // scrolling and stays big enough to hit on a touchscreen.
+        const int columns = 4;
+        const int rows = (count + columns - 1) / columns;
+        Rect grid = sectionArea.deflated(4.0f);
+        const float cellHeight = grid.height / static_cast<float>(std::max(1, rows));
+
+        for (int row = 0; row < rows; ++row) {
+            Rect rowRect = grid.removeFromTop(cellHeight);
+            const int first = row * columns;
+            const int inRow = std::min(columns, count - first);
+            const float cellWidth = rowRect.width / static_cast<float>(columns);
+
+            for (int column = 0; column < inRow; ++column) {
+                const int index = first + column;
+                Rect cell = rowRect.removeFromLeft(cellWidth).deflated(2.0f);
+
+                const StemSection& section = stems.sections()[static_cast<std::size_t>(index)];
+                const bool isActive = index == active;
+                const bool isPending = index == pending;
+
+                Colour fill = t.widgetBackground;
+                if (isActive) fill = t.accent.withAlpha(0.30f);
+                else if (isPending) fill = t.control.withAlpha(0.28f);
+
+                bool hovered = false, held = false;
+                const UiId cellId = ui.idFrom(&node, 400 + index);
+                if (ui.buttonBehaviour(cellId, cell, hovered, held))
+                    stems.requestSection(index);
+                if (hovered) fill = fill.brightened(1.4f);
+
+                list.addRectFilled(cell, fill, t.cornerRadius);
+
+                // The active cell carries a progress bar along its bottom edge,
+                // so how long is left of the loop is readable without looking
+                // anywhere else.
+                if (isActive) {
+                    const float progress = stems.loopProgress();
+                    list.addRectFilled(Rect{ cell.left(), cell.bottom() - 3.0f,
+                                             cell.width * progress, 3.0f }, t.accent);
+                    list.addRect(cell, t.accent, 1.0f, t.cornerRadius);
+                } else if (isPending) {
+                    list.addRect(cell, t.control, 1.0f, t.cornerRadius);
+                }
+
+                list.addTextClipped(ui.font(t.fontSmall), cell.deflated(3.0f),
+                                    isActive ? t.text : t.textDim, section.name,
+                                    DrawList::Align::Centre);
+            }
+        }
+    }
+
+    area.removeFromTop(4.0f);
+
+    // -- launch and divide -------------------------------------------------
+    Rect controlRow = area.removeFromTop(18.0f);
+    ui.parameterChoice(controlRow.removeFromLeft(controlRow.width * 0.55f),
+                       node.parameter(node.indexOfParameter("launch")));
+    controlRow.removeFromLeft(4.0f);
+    ui.parameterChoice(controlRow, node.parameter(node.indexOfParameter("divide")));
+
+    area.removeFromTop(4.0f);
+
+    // -- stem strips -------------------------------------------------------
+    for (int slot = 0; slot < kMaxStems; ++slot) {
+        if (area.height < 18.0f) break;
+        Rect row = area.removeFromTop(17.0f);
+
+        const bool loaded = stems.stemLoaded(slot);
+
+        const Rect muteArea = row.removeFromLeft(20.0f);
+        ui.parameterToggle(muteArea, node.parameter(
+            node.indexOfParameter("mute" + std::to_string(slot + 1))), t.danger);
+        row.removeFromLeft(3.0f);
+
+        const Rect nameArea = row.removeFromLeft(row.width * 0.44f);
+        list.addTextClipped(ui.font(t.fontSmall), nameArea,
+                            loaded ? t.textDim : t.textFaint,
+                            loaded ? stems.stemName(slot)
+                                   : std::string("drop a stem here"));
+
+        // A meter rather than a fader: the level is in the inspector, but
+        // whether a stem is actually making a sound is what you need at a
+        // glance when eight of them are running.
+        const Rect meterArea = row.deflated(1.0f);
+        list.addRectFilled(meterArea, t.widgetTrack, 2.0f);
+        const float level = std::max(stems.meterLevel(slot, 0), stems.meterLevel(slot, 1));
+        if (level > 0.0f) {
+            list.addRectFilled(Rect{ meterArea.left(), meterArea.top(),
+                                     meterArea.width * clampValue(level, 0.0f, 1.0f),
+                                     meterArea.height },
+                               level > 0.95f ? t.danger : t.accent, 2.0f);
+        }
+    }
+}
+
+void PatcherView::drawColorBody(Ui& ui, Node& node, const Rect& body) {
+    const Theme& t = theme();
+    DrawList& list = ui.draw();
+    auto& color = static_cast<ColorNode&>(node);
+
+    Rect area = body;
+
+    // -- the axis ----------------------------------------------------------
+    // Drawn as an actual red-to-blue gradient with a detent in the middle, so
+    // the knob's meaning needs no label and neutral is findable by eye.
+    Rect axis = area.removeFromTop(30.0f).deflated(2.0f);
+
+    constexpr int kBands = 24;
+    const float bandWidth = axis.width / static_cast<float>(kBands);
+    for (int i = 0; i < kBands; ++i) {
+        const float position = (static_cast<float>(i) + 0.5f) / static_cast<float>(kBands);
+        const float signed01 = position * 2.0f - 1.0f;
+
+        // Toward red one way, toward blue the other, desaturating through the
+        // middle where the chain is untouched.
+        const Colour red{ 0.85f, 0.22f, 0.20f, 1.0f };
+        const Colour blue{ 0.20f, 0.45f, 0.90f, 1.0f };
+        const Colour neutral = t.widgetTrack;
+
+        const Colour end = signed01 < 0.0f ? red : blue;
+        const float amount = std::abs(signed01);
+        const Colour band{ neutral.r + (end.r - neutral.r) * amount,
+                           neutral.g + (end.g - neutral.g) * amount,
+                           neutral.b + (end.b - neutral.b) * amount, 1.0f };
+
+        list.addRectFilled(Rect{ axis.left() + bandWidth * static_cast<float>(i),
+                                 axis.top(), bandWidth + 0.5f, axis.height }, band);
+    }
+    list.addRect(axis, t.border, 1.0f, 0.0f);
+
+    // The centre detent.
+    list.addRectFilled(Rect{ axis.centre().x - 0.5f, axis.top(), 1.0f, axis.height },
+                       t.textFaint);
+
+    Parameter& colorParam = node.parameter(node.indexOfParameter(ColorNode::kColorParam));
+
+    bool hovered = false, held = false;
+    const UiId axisId = ui.idFrom(&node, 500);
+    ui.buttonBehaviour(axisId, axis, hovered, held);
+    if (ui.isActive(axisId)) {
+        const float position = clampValue((ui.input().mousePosition.x - axis.left())
+                                              / std::max(1.0f, axis.width), 0.0f, 1.0f);
+        float value = position * 2.0f - 1.0f;
+        // Snaps to neutral near the middle: the one position that has to be
+        // exact is the one that means "leave it alone".
+        if (std::abs(value) < 0.04f) value = 0.0f;
+        colorParam.setValue(value);
+    }
+    if (hovered) ui.setCursor(Cursor::ResizeHorizontal);
+
+    // The handle.
+    const float current = colorParam.value();
+    const float handleX = axis.left() + axis.width * (current * 0.5f + 0.5f);
+    list.addRectFilled(Rect{ handleX - 2.0f, axis.top() - 2.0f, 4.0f, axis.height + 4.0f },
+                       t.text, 1.0f);
+
+    area.removeFromTop(4.0f);
+
+    // -- readout -----------------------------------------------------------
+    char readout[96];
+    std::snprintf(readout, sizeof(readout), "%s  %.0f%%   %d targets",
+                  current < -0.01f ? "red" : current > 0.01f ? "blue" : "neutral",
+                  std::abs(current) * 100.0f, static_cast<int>(color.targets().size()));
+    list.addTextClipped(ui.font(t.fontSmall), area.removeFromTop(14.0f),
+                        current == 0.0f ? t.textFaint : t.text, readout,
+                        DrawList::Align::Centre);
+
+    area.removeFromTop(3.0f);
+
+    // -- capture -----------------------------------------------------------
+    Rect captureRow = area.removeFromTop(20.0f);
+    const float third = captureRow.width / 3.0f;
+
+    if (engine_) {
+        if (ui.button(ui.idFrom(&node, 501), captureRow.removeFromLeft(third).deflated(1.0f),
+                      "set red", Ui::ButtonStyle::Normal))
+            color.captureEnd(ColorNode::End::Red, engine_->graph());
+        if (ui.button(ui.idFrom(&node, 502), captureRow.removeFromLeft(third).deflated(1.0f),
+                      "set mid", Ui::ButtonStyle::Normal))
+            color.captureEnd(ColorNode::End::Neutral, engine_->graph());
+        if (ui.button(ui.idFrom(&node, 503), captureRow.deflated(1.0f),
+                      "set blue", Ui::ButtonStyle::Normal))
+            color.captureEnd(ColorNode::End::Blue, engine_->graph());
+    }
+
+    area.removeFromTop(3.0f);
+    if (area.height >= 16.0f) {
+        Rect depthRow = area.removeFromTop(16.0f);
+        ui.parameterSlider(depthRow, node.parameter(node.indexOfParameter("depth")), t.accentDim);
+    }
+}
+
+void PatcherView::drawBuildBody(Ui& ui, Node& node, const Rect& body) {
+    const Theme& t = theme();
+    DrawList& list = ui.draw();
+    auto& build = static_cast<BuildNode&>(node);
+
+    Rect area = body;
+
+    // -- the switch --------------------------------------------------------
+    // Momentary, deliberately: it engages on press and releases on release,
+    // rather than toggling. A build you have to remember to turn off is a build
+    // that gets left on.
+    Rect switchArea = area.removeFromTop(52.0f).deflated(2.0f);
+
+    Parameter& engage = node.parameter(node.indexOfParameter(BuildNode::kEngageParam));
+
+    bool hovered = false, held = false;
+    const UiId switchId = ui.idFrom(&node, 600);
+    ui.buttonBehaviour(switchId, switchArea, hovered, held);
+
+    const bool down = ui.isActive(switchId);
+    engage.setValue(down ? 1.0f : 0.0f);
+
+    const float progress = build.progress();
+    const bool running = build.engaged();
+
+    Colour fill = running ? t.danger.withAlpha(0.35f) : t.widgetBackground;
+    if (hovered && !running) fill = fill.brightened(1.4f);
+    list.addRectFilled(switchArea, fill, t.cornerRadius);
+
+    if (running) {
+        list.addRectFilled(Rect{ switchArea.left(), switchArea.bottom() - 4.0f,
+                                 switchArea.width * progress, 4.0f }, t.danger);
+        list.addGlow(switchArea, t.danger.withAlpha(0.30f), 8.0f, t.cornerRadius, 4);
+    }
+    list.addRect(switchArea, running ? t.danger : t.border, 1.0f, t.cornerRadius);
+
+    list.addTextClipped(ui.font(t.fontUiBold), switchArea,
+                        running ? t.text : t.textDim,
+                        running ? "BUILDING" : "hold to build", DrawList::Align::Centre);
+
+    if (hovered) ui.setTooltip("Hold. Releases on the next bar so the drop lands in time.");
+
+    area.removeFromTop(4.0f);
+
+    // -- shape -------------------------------------------------------------
+    Rect row = area.removeFromTop(17.0f);
+    ui.parameterSlider(row, node.parameter(node.indexOfParameter("bars")), t.control);
+
+    area.removeFromTop(3.0f);
+    if (area.height >= 17.0f) {
+        Rect curveRow = area.removeFromTop(17.0f);
+        ui.parameterChoice(curveRow.removeFromLeft(curveRow.width * 0.5f - 2.0f),
+                           node.parameter(node.indexOfParameter("curve")));
+        curveRow.removeFromLeft(4.0f);
+        ui.parameterChoice(curveRow, node.parameter(node.indexOfParameter("release")));
+    }
+
+    // A build with nothing wired to it is silent and confusing, so say so.
+    if (build.stemPlayer() == kInvalidNode && build.colorNode() == kInvalidNode
+        && area.height >= 14.0f) {
+        list.addTextClipped(ui.font(t.fontSmall), area.removeFromTop(14.0f), t.textFaint,
+                            "not wired - pick targets in the inspector",
+                            DrawList::Align::Centre);
     }
 }
 

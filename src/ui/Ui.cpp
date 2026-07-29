@@ -1151,6 +1151,38 @@ void Ui::setScrollOffset(UiId control, float offset) {
     scrollStates_.push_back(ScrollState{ control, offset, 0.0f, Rect{} });
 }
 
+bool Ui::intField(UiId control, const Rect& rect, int& value, int lo, int hi) {
+    const Theme& t = theme();
+    DrawList& list = insidePopup_ ? overlayList_ : drawList_;
+
+    bool hovered = false, held = false;
+    buttonBehaviour(control, rect, hovered, held);
+
+    bool changed = false;
+    if (isActive(control)) {
+        // Two pixels per step: fine enough to land on a bar exactly, coarse
+        // enough to cross a whole song without letting go.
+        dragAccumulator_ += input_.mouseDelta.x * (input_.shift ? 0.1f : 0.5f);
+        const int steps = static_cast<int>(dragAccumulator_);
+        if (steps != 0) {
+            dragAccumulator_ -= static_cast<float>(steps);
+            const int next = clampValue(value + steps, lo, hi);
+            if (next != value) { value = next; changed = true; }
+        }
+    } else {
+        dragAccumulator_ = 0.0f;
+    }
+
+    list.addRectFilled(rect, hovered ? t.widgetHover : t.widgetBackground, t.cornerRadius);
+    list.addRect(rect, t.border, t.borderWidth, t.cornerRadius);
+    list.addTextClipped(font(t.fontSmall), rect.deflated(t.smallPadding),
+                        hovered ? t.text : t.textDim, std::to_string(value),
+                        DrawList::Align::Centre);
+
+    if (hovered) setCursor(Cursor::ResizeHorizontal);
+    return changed;
+}
+
 Rect Ui::beginScroll(UiId control, const Rect& rect, float contentHeight) {
     ScrollState* state = nullptr;
     for (ScrollState& candidate : scrollStates_)
