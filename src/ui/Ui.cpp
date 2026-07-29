@@ -138,8 +138,11 @@ void Ui::endFrame() {
 
     if (popupId_ != kNoId && input_.keyPressed(key::Escape)) closePopup();
 
-    // A drag that was released without anyone accepting it simply ends.
-    if (dragReleasedThisFrame_) cancelDrag();
+    // Every drag ends on the release, accepted or not - and only here, so that
+    // whoever accepted it has already read the payload. Keying this off the
+    // released flag alone would leave an accepted drop's payload behind, since
+    // acceptDrop clears that flag to stop a second target taking the same drop.
+    if (input_.mouseReleased[static_cast<int>(MouseButton::Left)]) cancelDrag();
 
     drawNotification();
     drawTooltip();
@@ -191,6 +194,10 @@ bool Ui::hovering(const Rect& rect) const {
     // An open popup swallows hovering everywhere except inside itself.
     if (popupId_ != kNoId && !insidePopup_) return false;
 
+    // So does a modal sheet - except for the popups it opens itself, which are
+    // drawn in the overlay and are logically part of it.
+    if (modalActive_ && !insideModal_ && !insidePopup_) return false;
+
     const Vec2 p = input_.mousePosition;
     if (!rect.contains(p)) return false;
 
@@ -209,6 +216,14 @@ bool Ui::buttonBehaviour(UiId control, const Rect& rect, bool& outHovered, bool&
     if (over && input_.mousePressed[static_cast<int>(MouseButton::Left)] && active_ == kNoId) {
         active_ = control;
         dragStartPosition_ = input_.mousePosition;
+
+        // One widget per press. Holding `active_` is enough to keep later
+        // widgets out while the button is down, but a press and its release
+        // arriving in the same frame - a touchpad tap, a remote desktop, a
+        // synthetic click - releases `active_` before the frame is over, and
+        // whatever is drawn underneath would then claim the same press. The
+        // input is our own copy, so consuming it here is the whole fix.
+        input_.mousePressed[static_cast<int>(MouseButton::Left)] = false;
     }
 
     if (active_ == control) {
@@ -1347,7 +1362,12 @@ bool Ui::acceptDrop(const Rect& rect, std::string_view type) {
     if (!dragReleasedThisFrame_ || dragType_ != type) return false;
     if (!rect.contains(input_.mousePosition)) return false;
 
-    cancelDrag();
+    // The payload is deliberately left intact: the caller reads it *after* this
+    // returns, and clearing it here handed every drop target an empty string.
+    // endFrame clears it, once the frame is genuinely over.
+    //
+    // Clearing the released flag is what keeps a single drop from being taken
+    // twice by two overlapping targets.
     dragReleasedThisFrame_ = false;
     return true;
 }

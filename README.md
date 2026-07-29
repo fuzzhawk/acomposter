@@ -5,9 +5,10 @@ sample players and loopers, mixers and crossfaders, VST2 hosting for both 32-
 and 64-bit plugins, and a metasurface that re-poses the whole patch with one
 gesture.
 
-Built with no third-party libraries at all. Direct3D 11, Win32 and WASAPI are
-the only things it stands on; the interface, the font rasteriser, the audio
-codecs, the JSON, and the VST2 host are all in this repository.
+Built with no third-party libraries at all. Direct3D 11, Win32, WASAPI and
+ASIO are the only things it stands on; the interface, the font rasteriser, the
+audio codecs, the JSON, and both the VST2 and ASIO hosts are all in this
+repository.
 
 ```
 git clone https://github.com/fuzzhawk/acomposter
@@ -111,6 +112,34 @@ pitch while everything else morphs around it. And the cursor's movement can be
 recorded and replayed, optionally locked to the transport so a gesture repeats
 every N beats forever.
 
+### Audio output
+
+WASAPI or ASIO, chosen in settings (`Ctrl+,`).
+
+WASAPI needs no driver and shares the device with everything else on the
+machine, but shared mode is stuck with the endpoint's mix format — which
+Windows publishes as stereo on nearly every interface, however many outputs the
+hardware actually has. If you can only see two channels of a twenty-channel
+interface, that is why.
+
+ASIO talks to the manufacturer's own driver and gets all of them. Pick the
+driver, then choose how many channels the master bus renders and which of the
+device's outputs they land on, so a stereo patch can come out of outputs 17-18
+while something else uses 1-2. The driver's own control panel — buffer size,
+clock source — is one button away, and when it asks to be reset acomposter
+reopens the device by itself.
+
+The ASIO host is written from the published specification, like the VST2 one;
+no SDK is vendored or required. 64-bit drivers only. If ASIO cannot be opened,
+acomposter falls back to WASAPI and says so rather than going silent.
+
+### File browser
+
+Down the left of the patch view: the folders acomposter writes to, the ones
+samples usually live in, and every mounted drive, with a path field you can
+paste into. Drag a file onto the canvas for a new player, or onto an existing
+one to replace what it is holding. Double-click a patch to open it.
+
 ---
 
 ## Getting started
@@ -208,7 +237,7 @@ src/vst2/       clean-room VST2 ABI, in-process host, bridge client, scanner
 src/bridge/     the helper process, built twice
 src/gfx/        D3D11 renderer, draw list, GDI font atlas
 src/ui/         immediate-mode framework, theme, views
-src/platform/   window, WASAPI, file dialogs
+src/platform/   window, WASAPI and ASIO backends, file dialogs
 tests/          470 checks, runnable on the build host
 ```
 
@@ -219,10 +248,16 @@ plugin bridge actually work.
 
 ## Status
 
-Version 0.1.0. Everything described above is implemented, and the binaries build
+Version 0.1.2. Everything described above is implemented, and the binaries build
 clean under both MSVC and mingw-w64 with warnings as errors.
 
-The engine, codecs, metasurface and patch format are covered by tests that run
-on the build host. The parts that need real Windows - the renderer, WASAPI, and
-plugin hosting against actual plugins - have been built and statically verified
-but not yet exercised on hardware. Try it and report what breaks.
+The engine, codecs, metasurface and patch format are covered by 470 checks that
+run on the build host. The interface, the patcher, the file browser, drag and
+drop, and VST2 scanning and instantiation have been driven end to end against
+the real binary. WASAPI has been exercised on hardware.
+
+**ASIO has not been tested against a real driver.** It is written to the
+specification and its structure layouts are pinned by `static_assert`, but no
+interface has been in front of it. If it misbehaves, the driver name, its
+reported channel count and sample format, and what the status bar says are the
+useful things to report.

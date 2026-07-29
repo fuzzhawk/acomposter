@@ -94,6 +94,36 @@ std::string documents() {
 std::string patchesDirectory() { return pathJoin(documents(), "acomposter\\patches"); }
 std::string recordingsDirectory() { return pathJoin(documents(), "acomposter\\recordings"); }
 
+std::string desktop() { return knownFolder(FOLDERID_Desktop); }
+std::string downloads() { return knownFolder(FOLDERID_Downloads); }
+std::string musicFolder() { return knownFolder(FOLDERID_Music); }
+std::string userProfile() { return knownFolder(FOLDERID_Profile); }
+
+std::vector<std::string> driveRoots() {
+    std::vector<std::string> roots;
+
+    const DWORD mask = ::GetLogicalDrives();
+    if (mask == 0) return roots;
+
+    for (int letter = 0; letter < 26; ++letter) {
+        if ((mask & (1u << letter)) == 0) continue;
+
+        char path[4] = { static_cast<char>('A' + letter), ':', '\\', '\0' };
+
+        // Skip anything with no medium in it: an empty optical drive would
+        // otherwise sit in the sidebar and block for seconds when clicked.
+        const UINT type = ::GetDriveTypeA(path);
+        if (type != DRIVE_FIXED && type != DRIVE_REMOVABLE && type != DRIVE_REMOTE)
+            continue;
+        if (type == DRIVE_REMOVABLE && ::GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES)
+            continue;
+
+        roots.emplace_back(path);
+    }
+
+    return roots;
+}
+
 std::string executableDirectory() {
     wchar_t buffer[MAX_PATH * 2];
     const DWORD length = ::GetModuleFileNameW(nullptr, buffer, static_cast<DWORD>(std::size(buffer)));
