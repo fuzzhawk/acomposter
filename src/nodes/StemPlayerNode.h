@@ -58,6 +58,9 @@ public:
     // -- stems (message thread) --------------------------------------------
     bool loadStem(int slot, const std::string& utf8Path, std::string* error = nullptr);
     void clearStem(int slot);
+    // Takes an already-decoded buffer. Used by the tests, and by anything that
+    // has audio in hand rather than a path.
+    void setStemFromBuffer(int slot, std::shared_ptr<SampleBuffer> buffer, std::string name);
     std::shared_ptr<SampleBuffer> stem(int slot) const;
     const std::string& stemPath(int slot) const;
     const std::string& stemName(int slot) const;
@@ -67,6 +70,27 @@ public:
     // The longest loaded stem, which is what the section editor lays bars out
     // against. Zero when nothing is loaded.
     double songLengthBars(double bpm, int beatsPerBar) const;
+
+    // -- tempo -------------------------------------------------------------
+    // The tempo the stems were bounced at. Everything the node does with the
+    // grid is in terms of this, not the project tempo, so a set can hold songs
+    // at different tempos without each one needing its own transport.
+    double stemBpm() const noexcept { return stemBpm_; }
+    void setStemBpm(double bpm) noexcept;
+
+    // Works the length back into a tempo, assuming the longest stem is a whole
+    // number of bars - which a bounced stem essentially always is. Returns 0
+    // when it cannot find a musically plausible answer.
+    double detectBpm(int beatsPerBar, int* outBars = nullptr) const;
+    // Whether the tempo came from detection, a file name, or the user.
+    const std::string& tempoSource() const noexcept { return tempoSource_; }
+
+    // -- spectral overview -------------------------------------------------
+    // Three bands per bucket - low, mid, high - normalised against the stem's
+    // own peak. Drawn as colour so a glance at the node says which stem carries
+    // the weight and which carries the air.
+    struct SpectralBand { float low = 0.0f; float mid = 0.0f; float high = 0.0f; };
+    const std::vector<SpectralBand>& spectrum(int slot) const;
 
     // -- sections (message thread) -----------------------------------------
     const std::vector<StemSection>& sections() const noexcept { return sections_; }
@@ -118,6 +142,8 @@ private:
         std::string path;
         std::string name;
         std::atomic<float> meter[2] = {};
+        // Message-thread only, built once on load.
+        std::vector<SpectralBand> spectrum;
     };
 
     // Reads one stem at a fractional song position, with linear interpolation.
@@ -128,7 +154,16 @@ private:
     void resolveSection(int index, double beatsPerBar, double& startBeats,
                         double& lengthBeats) const;
 
+    // Splits a stem into low/mid/high energy per bucket with a pair of
+    // one-pole filters. Cheap, and enough to colour a strip: this is a picture,
+    // not an analyser.
+    static void buildSpectrum(const SampleBuffer& buffer, std::vector<SpectralBand>& out,
+                              int buckets);
+
     std::array<Stem, kMaxStems> stems_;
+
+    double stemBpm_ = 0.0;          // 0 = follow the project tempo
+    std::string tempoSource_ = "project";
 
     // Message-thread copy, and the immutable snapshot the audio thread reads.
     std::vector<StemSection> sections_;

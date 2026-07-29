@@ -145,7 +145,7 @@ float PatcherView::nodeHeight(const Node& node) const {
     const std::string& type = node.typeName();
 
     if (type == "sample.player") bodyHeight = 128.0f;
-    else if (type == "stem.player") bodyHeight = 268.0f;
+    else if (type == "stem.player") bodyHeight = 292.0f;
     else if (type == "color") bodyHeight = 132.0f;
     else if (type == "build") bodyHeight = 116.0f;
     else if (type == "looper") bodyHeight = 116.0f;
@@ -408,8 +408,10 @@ bool PatcherView::handleFileDrop(const std::string& utf8Path, Vec2 screenPositio
 
             const float scale = zoom_;
             const float bodyTop = box.top() + theme().nodeHeaderHeight * scale;
-            // Section grid, launch row and the gaps above the strips.
-            const float stripsTop = bodyTop + (76.0f + 4.0f + 18.0f + 4.0f) * scale;
+            // Section grid, launch row, tempo row and the gaps above the
+            // strips. Kept in one expression so it is obvious this has to move
+            // whenever drawStemPlayerBody's layout does.
+            const float stripsTop = bodyTop + (76.0f + 4.0f + 18.0f + 3.0f + 18.0f + 4.0f) * scale;
             const float stripHeight = 17.0f * scale;
 
             int slot = 0;
@@ -634,8 +636,16 @@ void PatcherView::drawNode(Ui& ui, Node& node, const Rect& bounds) {
 
     // Below this the controls are too small to hit reliably, so the node shows
     // only its identity and its meters.
-    if (zoom_ > 0.62f && body.height > 12.0f)
+    if (zoom_ > 0.62f && body.height > 12.0f) {
+        // Clipped to the node. Body layouts are authored in unscaled units and
+        // scaled by bodyScale(); rounding and text that cannot shrink below its
+        // atlas size mean the last row can still overhang by a pixel or two, and
+        // a control drawn outside its own node is one that can be clicked
+        // through another node sitting on top of it.
+        ui.pushClip(body);
         drawNodeBody(ui, node, body);
+        ui.popClip();
+    }
 
     // -- ports -------------------------------------------------------------
     for (int p = 0; p < node.numInputs(); ++p) {
@@ -712,6 +722,7 @@ void PatcherView::drawNodeBody(Ui& ui, Node& node, const Rect& body) {
 }
 
 void PatcherView::drawSamplePlayerBody(Ui& ui, Node& node, const Rect& body) {
+    const float s = bodyScale();
     const Theme& t = theme();
     DrawList& list = ui.draw();
     auto& player = static_cast<SamplePlayerNode&>(node);
@@ -768,12 +779,12 @@ void PatcherView::drawSamplePlayerBody(Ui& ui, Node& node, const Rect& body) {
         player.loadFile(ui.dragPayload(), &error);
     }
 
-    area.removeFromTop(4.0f);
+    area.removeFromTop(s * 4.0f);
 
     // -- transport row -----------------------------------------------------
-    Rect controls = area.removeFromTop(20.0f);
-    const Rect playButton = controls.removeFromLeft(26.0f);
-    controls.removeFromLeft(4.0f);
+    Rect controls = area.removeFromTop(s * 20.0f);
+    const Rect playButton = controls.removeFromLeft(s * 26.0f);
+    controls.removeFromLeft(s * 4.0f);
 
     Parameter& play = node.parameter(node.indexOfParameter("play"));
     const bool playing = play.boolValue();
@@ -784,22 +795,23 @@ void PatcherView::drawSamplePlayerBody(Ui& ui, Node& node, const Rect& body) {
 
     const Rect syncCombo = controls.removeFromLeft(std::min(72.0f, controls.width * 0.5f));
     ui.parameterChoice(syncCombo, node.parameter(node.indexOfParameter("sync")));
-    controls.removeFromLeft(4.0f);
+    controls.removeFromLeft(s * 4.0f);
 
     ui.parameterSlider(controls, node.parameter(node.indexOfParameter("loopbeats")), t.control, false);
 
-    area.removeFromTop(3.0f);
+    area.removeFromTop(s * 3.0f);
 
     // -- level row ---------------------------------------------------------
     Rect levels = area.removeFromTop(std::min(20.0f, area.height));
-    const Rect meterArea = levels.removeFromRight(14.0f);
-    levels.removeFromRight(4.0f);
+    const Rect meterArea = levels.removeFromRight(s * 14.0f);
+    levels.removeFromRight(s * 4.0f);
 
     ui.parameterSlider(levels, node.parameter(node.indexOfParameter("gain")), t.accent, false);
     ui.stereoMeter(meterArea, player.meterLevel(0), player.meterLevel(1), true);
 }
 
 void PatcherView::drawLooperBody(Ui& ui, Node& node, const Rect& body) {
+    const float s = bodyScale();
     const Theme& t = theme();
     DrawList& list = ui.draw();
     auto& looper = static_cast<LooperNode&>(node);
@@ -841,50 +853,51 @@ void PatcherView::drawLooperBody(Ui& ui, Node& node, const Rect& body) {
         list.addRect(strip, t.recording.withAlpha(alpha), 1.5f, 2.0f);
     }
 
-    Rect statusRow = area.removeFromTop(14.0f);
+    Rect statusRow = area.removeFromTop(s * 14.0f);
     char status[96];
     std::snprintf(status, sizeof(status), "%s  %.2fs", looper.stateName(), looper.loopSeconds());
     list.addTextClipped(ui.font(t.fontSmall), statusRow,
                         state == LooperNode::State::Recording ? t.recording : t.textDim, status);
 
-    area.removeFromTop(2.0f);
+    area.removeFromTop(s * 2.0f);
 
     // -- transport ---------------------------------------------------------
-    Rect controls = area.removeFromTop(20.0f);
+    Rect controls = area.removeFromTop(s * 20.0f);
     const float buttonWidth = std::min(30.0f, controls.width / 4.5f);
 
     if (ui.iconButton(ui.idFrom(&node, 20), controls.removeFromLeft(buttonWidth),
                       Ui::Icon::Record, t.recording,
                       state == LooperNode::State::Recording))
         looper.toggleRecord();
-    controls.removeFromLeft(3.0f);
+    controls.removeFromLeft(s * 3.0f);
 
     if (ui.iconButton(ui.idFrom(&node, 21), controls.removeFromLeft(buttonWidth),
                       Ui::Icon::Play, t.accent,
                       state == LooperNode::State::Playing || state == LooperNode::State::Overdubbing))
         looper.togglePlay();
-    controls.removeFromLeft(3.0f);
+    controls.removeFromLeft(s * 3.0f);
 
     if (ui.iconButton(ui.idFrom(&node, 22), controls.removeFromLeft(buttonWidth),
                       Ui::Icon::Plus, t.control, state == LooperNode::State::Overdubbing))
         looper.toggleOverdub();
     if (ui.isHot(ui.idFrom(&node, 22))) ui.setTooltip("Overdub onto the take");
-    controls.removeFromLeft(3.0f);
+    controls.removeFromLeft(s * 3.0f);
 
     if (ui.iconButton(ui.idFrom(&node, 23), controls.removeFromLeft(buttonWidth),
                       Ui::Icon::Trash, t.textDim))
         looper.clear();
 
-    area.removeFromTop(3.0f);
+    area.removeFromTop(s * 3.0f);
 
     Rect levels = area.removeFromTop(std::min(20.0f, area.height));
-    const Rect meterArea = levels.removeFromRight(14.0f);
-    levels.removeFromRight(4.0f);
+    const Rect meterArea = levels.removeFromRight(s * 14.0f);
+    levels.removeFromRight(s * 4.0f);
     ui.parameterSlider(levels, node.parameter(node.indexOfParameter("feedback")), t.control, false);
     ui.stereoMeter(meterArea, looper.meterLevel(0), looper.meterLevel(1), true);
 }
 
 void PatcherView::drawCrossfaderBody(Ui& ui, Node& node, const Rect& body) {
+    const float s = bodyScale();
     const Theme& t = theme();
     DrawList& list = ui.draw();
     auto& fader = static_cast<CrossfaderNode&>(node);
@@ -893,7 +906,7 @@ void PatcherView::drawCrossfaderBody(Ui& ui, Node& node, const Rect& body) {
 
     // A and B labels with their live gains, so the fader's effect is visible
     // even when the audio is not obviously changing.
-    Rect labels = area.removeFromTop(13.0f);
+    Rect labels = area.removeFromTop(s * 13.0f);
     const Rect labelA = labels.removeFromLeft(labels.width * 0.5f);
     list.addTextClipped(ui.font(t.fontSmall), labelA,
                         fader.sideGain(0) > 0.5f ? t.accent : t.textFaint, "A");
@@ -902,7 +915,7 @@ void PatcherView::drawCrossfaderBody(Ui& ui, Node& node, const Rect& body) {
                         DrawList::Align::Right);
 
     // The fader itself gets the most vertical space of anything on the node.
-    Rect faderArea = area.removeFromTop(24.0f);
+    Rect faderArea = area.removeFromTop(s * 24.0f);
     Parameter& position = node.parameter(fader.positionParam());
     float normalised = position.normalised();
 
@@ -913,23 +926,24 @@ void PatcherView::drawCrossfaderBody(Ui& ui, Node& node, const Rect& body) {
     list.addRectFilled(Rect{ faderArea.centre().x - 0.5f, faderArea.top() - 2.0f, 1.0f, 3.0f },
                        t.textFaint);
 
-    area.removeFromTop(4.0f);
+    area.removeFromTop(s * 4.0f);
 
-    Rect cuts = area.removeFromTop(18.0f);
+    Rect cuts = area.removeFromTop(s * 18.0f);
     const Rect cutA = cuts.removeFromLeft(cuts.width * 0.5f - 2.0f);
-    cuts.removeFromLeft(4.0f);
+    cuts.removeFromLeft(s * 4.0f);
     ui.parameterToggle(cutA, node.parameter(node.indexOfParameter("cuta")), t.danger);
     ui.parameterToggle(cuts, node.parameter(node.indexOfParameter("cutb")), t.danger);
 
-    area.removeFromTop(3.0f);
-    if (area.height >= 16.0f) {
-        Rect curveRow = area.removeFromTop(18.0f);
+    area.removeFromTop(s * 3.0f);
+    if (area.height >= s * 16.0f) {
+        Rect curveRow = area.removeFromTop(s * 18.0f);
         ui.parameterChoice(curveRow, node.parameter(node.indexOfParameter("curve")));
     }
 }
 
 
 void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
+    const float s = bodyScale();
     const Theme& t = theme();
     DrawList& list = ui.draw();
     auto& stems = static_cast<StemPlayerNode&>(node);
@@ -943,7 +957,7 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
     const int active = stems.activeSection();
     const int pending = stems.pendingSection();
 
-    Rect sectionArea = area.removeFromTop(76.0f);
+    Rect sectionArea = area.removeFromTop(s * 76.0f);
     list.addRectFilled(sectionArea, t.canvas.brightened(1.08f), t.cornerRadius);
 
     if (count == 0) {
@@ -955,7 +969,7 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
         // scrolling and stays big enough to hit on a touchscreen.
         const int columns = 4;
         const int rows = (count + columns - 1) / columns;
-        Rect grid = sectionArea.deflated(4.0f);
+        Rect grid = sectionArea.deflated(s * 4.0f);
         const float cellHeight = grid.height / static_cast<float>(std::max(1, rows));
 
         for (int row = 0; row < rows; ++row) {
@@ -966,7 +980,7 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
 
             for (int column = 0; column < inRow; ++column) {
                 const int index = first + column;
-                Rect cell = rowRect.removeFromLeft(cellWidth).deflated(2.0f);
+                Rect cell = rowRect.removeFromLeft(cellWidth).deflated(s * 2.0f);
 
                 const StemSection& section = stems.sections()[static_cast<std::size_t>(index)];
                 const bool isActive = index == active;
@@ -996,58 +1010,141 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
                     list.addRect(cell, t.control, 1.0f, t.cornerRadius);
                 }
 
-                list.addTextClipped(ui.font(t.fontSmall), cell.deflated(3.0f),
+                list.addTextClipped(ui.font(t.fontSmall), cell.deflated(s * 3.0f),
                                     isActive ? t.text : t.textDim, section.name,
                                     DrawList::Align::Centre);
             }
         }
     }
 
-    area.removeFromTop(4.0f);
+    area.removeFromTop(s * 4.0f);
 
     // -- launch and divide -------------------------------------------------
-    Rect controlRow = area.removeFromTop(18.0f);
+    Rect controlRow = area.removeFromTop(s * 18.0f);
     ui.parameterChoice(controlRow.removeFromLeft(controlRow.width * 0.55f),
                        node.parameter(node.indexOfParameter("launch")));
-    controlRow.removeFromLeft(4.0f);
+    controlRow.removeFromLeft(s * 4.0f);
     ui.parameterChoice(controlRow, node.parameter(node.indexOfParameter("divide")));
 
-    area.removeFromTop(4.0f);
+    area.removeFromTop(s * 3.0f);
+
+    // -- tempo -------------------------------------------------------------
+    Rect tempoRow = area.removeFromTop(s * 18.0f);
+
+    const double stemBpm = stems.stemBpm();
+    const double transportBpm = engine_ ? engine_->transport().bpm() : 120.0;
+    const double effective = stemBpm > 0.0 ? stemBpm : transportBpm;
+
+    char tempoText[64];
+    std::snprintf(tempoText, sizeof(tempoText), "%.2f bpm", effective);
+    list.addTextClipped(ui.font(t.fontSmall), tempoRow.removeFromLeft(tempoRow.width * 0.34f),
+                        stemBpm > 0.0 ? t.text : t.textFaint, tempoText);
+
+    if (ui.button(ui.idFrom(&node, 420), tempoRow.removeFromLeft(tempoRow.width * 0.42f),
+                  "detect", Ui::ButtonStyle::Normal)) {
+        int bars = 0;
+        const double detected = stems.detectBpm(
+            engine_ ? engine_->transport().snapshot().timeSigNumerator : 4, &bars);
+        if (detected > 0.0) {
+            stems.setStemBpm(detected);
+            ui.notify("detected " + std::to_string(static_cast<int>(detected + 0.5))
+                          + " bpm over " + std::to_string(bars) + " bars",
+                      t.accent, 3.0f);
+        } else {
+            ui.notify("could not work a tempo out of that length", t.danger, 4.0f);
+        }
+    }
+    if (ui.isHot(ui.idFrom(&node, 420)))
+        ui.setTooltip("Work the tempo back from the length of the longest stem");
+
+    tempoRow.removeFromLeft(s * 3.0f);
+
+    // Pushes the stem tempo onto the project, which is what you want once the
+    // stems are the thing everything else has to line up with.
+    if (ui.button(ui.idFrom(&node, 421), tempoRow, "to project",
+                  Ui::ButtonStyle::Normal, false, engine_ != nullptr && effective > 0.0)) {
+        if (engine_) {
+            engine_->transport().setBpm(effective);
+            ui.notify("project tempo set to " + std::to_string(static_cast<int>(effective + 0.5))
+                          + " bpm", t.accent, 2.5f);
+        }
+    }
+    if (ui.isHot(ui.idFrom(&node, 421)))
+        ui.setTooltip("Set the project tempo from this stem player");
+
+    area.removeFromTop(s * 4.0f);
 
     // -- stem strips -------------------------------------------------------
     for (int slot = 0; slot < kMaxStems; ++slot) {
-        if (area.height < 18.0f) break;
-        Rect row = area.removeFromTop(17.0f);
+        if (area.height < s * 18.0f) break;
+        Rect row = area.removeFromTop(s * 17.0f);
 
         const bool loaded = stems.stemLoaded(slot);
 
-        const Rect muteArea = row.removeFromLeft(20.0f);
+        const Rect muteArea = row.removeFromLeft(s * 20.0f);
         ui.parameterToggle(muteArea, node.parameter(
             node.indexOfParameter("mute" + std::to_string(slot + 1))), t.danger);
-        row.removeFromLeft(3.0f);
+        row.removeFromLeft(s * 3.0f);
 
-        const Rect nameArea = row.removeFromLeft(row.width * 0.44f);
+        const Rect nameArea = row.removeFromLeft(row.width * 0.30f);
         list.addTextClipped(ui.font(t.fontSmall), nameArea,
                             loaded ? t.textDim : t.textFaint,
                             loaded ? stems.stemName(slot)
                                    : std::string("drop a stem here"));
 
-        // A meter rather than a fader: the level is in the inspector, but
-        // whether a stem is actually making a sound is what you need at a
-        // glance when eight of them are running.
-        const Rect meterArea = row.deflated(1.0f);
-        list.addRectFilled(meterArea, t.widgetTrack, 2.0f);
+        // -- spectral strip ------------------------------------------------
+        // Red where the energy is low, blue where it is high, brightness by
+        // level. Eight identically-named waveforms tell you nothing; eight
+        // strips coloured by content tell you which one is the bass at a glance,
+        // and which one the colour engine is about to do something drastic to.
+        const Rect strip = row.deflated(s * 1.0f);
+        list.addRectFilled(strip, t.panelSunken, 2.0f);
+
+        const auto& spectrum = stems.spectrum(slot);
+        if (!spectrum.empty() && strip.width > 2.0f) {
+            const int columns = std::min(static_cast<int>(strip.width),
+                                         static_cast<int>(spectrum.size()));
+            const float columnWidth = strip.width / static_cast<float>(std::max(1, columns));
+
+            for (int c = 0; c < columns; ++c) {
+                const std::size_t index = static_cast<std::size_t>(
+                    static_cast<float>(c) / static_cast<float>(columns)
+                    * static_cast<float>(spectrum.size()));
+                const auto& band = spectrum[std::min(index, spectrum.size() - 1)];
+
+                const float total = band.low + band.mid + band.high;
+                if (total < 1.0e-4f) continue;
+
+                // Hue from the balance of the three bands, value from the sum.
+                const float lowShare = band.low / total;
+                const float highShare = band.high / total;
+                const float level = clampValue(total, 0.0f, 1.0f);
+
+                const Colour colour{ 0.30f + lowShare * 0.70f,
+                                     0.28f + (1.0f - std::abs(lowShare - highShare)) * 0.30f,
+                                     0.35f + highShare * 0.65f,
+                                     0.25f + level * 0.75f };
+
+                list.addRectFilled(Rect{ strip.left() + columnWidth * static_cast<float>(c),
+                                         strip.top(), columnWidth + 0.5f, strip.height },
+                                   colour);
+            }
+        }
+
+        // The live meter rides on top as a thin underline, so it does not hide
+        // the spectrum it is drawn over.
         const float level = std::max(stems.meterLevel(slot, 0), stems.meterLevel(slot, 1));
         if (level > 0.0f) {
-            list.addRectFilled(Rect{ meterArea.left(), meterArea.top(),
-                                     meterArea.width * clampValue(level, 0.0f, 1.0f),
-                                     meterArea.height },
-                               level > 0.95f ? t.danger : t.accent, 2.0f);
+            list.addRectFilled(Rect{ strip.left(), strip.bottom() - s * 2.0f,
+                                     strip.width * clampValue(level, 0.0f, 1.0f), s * 2.0f },
+                               level > 0.95f ? t.danger : t.accent);
         }
+        list.addRect(strip, t.border.withAlpha(0.5f), 1.0f, 2.0f);
     }
 }
 
 void PatcherView::drawColorBody(Ui& ui, Node& node, const Rect& body) {
+    const float s = bodyScale();
     const Theme& t = theme();
     DrawList& list = ui.draw();
     auto& color = static_cast<ColorNode&>(node);
@@ -1057,7 +1154,7 @@ void PatcherView::drawColorBody(Ui& ui, Node& node, const Rect& body) {
     // -- the axis ----------------------------------------------------------
     // Drawn as an actual red-to-blue gradient with a detent in the middle, so
     // the knob's meaning needs no label and neutral is findable by eye.
-    Rect axis = area.removeFromTop(30.0f).deflated(2.0f);
+    Rect axis = area.removeFromTop(s * 30.0f).deflated(s * 2.0f);
 
     constexpr int kBands = 24;
     const float bandWidth = axis.width / static_cast<float>(kBands);
@@ -1108,43 +1205,44 @@ void PatcherView::drawColorBody(Ui& ui, Node& node, const Rect& body) {
     list.addRectFilled(Rect{ handleX - 2.0f, axis.top() - 2.0f, 4.0f, axis.height + 4.0f },
                        t.text, 1.0f);
 
-    area.removeFromTop(4.0f);
+    area.removeFromTop(s * 4.0f);
 
     // -- readout -----------------------------------------------------------
     char readout[96];
     std::snprintf(readout, sizeof(readout), "%s  %.0f%%   %d targets",
                   current < -0.01f ? "red" : current > 0.01f ? "blue" : "neutral",
                   std::abs(current) * 100.0f, static_cast<int>(color.targets().size()));
-    list.addTextClipped(ui.font(t.fontSmall), area.removeFromTop(14.0f),
+    list.addTextClipped(ui.font(t.fontSmall), area.removeFromTop(s * 14.0f),
                         current == 0.0f ? t.textFaint : t.text, readout,
                         DrawList::Align::Centre);
 
-    area.removeFromTop(3.0f);
+    area.removeFromTop(s * 3.0f);
 
     // -- capture -----------------------------------------------------------
-    Rect captureRow = area.removeFromTop(20.0f);
+    Rect captureRow = area.removeFromTop(s * 20.0f);
     const float third = captureRow.width / 3.0f;
 
     if (engine_) {
-        if (ui.button(ui.idFrom(&node, 501), captureRow.removeFromLeft(third).deflated(1.0f),
+        if (ui.button(ui.idFrom(&node, 501), captureRow.removeFromLeft(third).deflated(s * 1.0f),
                       "set red", Ui::ButtonStyle::Normal))
             color.captureEnd(ColorNode::End::Red, engine_->graph());
-        if (ui.button(ui.idFrom(&node, 502), captureRow.removeFromLeft(third).deflated(1.0f),
+        if (ui.button(ui.idFrom(&node, 502), captureRow.removeFromLeft(third).deflated(s * 1.0f),
                       "set mid", Ui::ButtonStyle::Normal))
             color.captureEnd(ColorNode::End::Neutral, engine_->graph());
-        if (ui.button(ui.idFrom(&node, 503), captureRow.deflated(1.0f),
+        if (ui.button(ui.idFrom(&node, 503), captureRow.deflated(s * 1.0f),
                       "set blue", Ui::ButtonStyle::Normal))
             color.captureEnd(ColorNode::End::Blue, engine_->graph());
     }
 
-    area.removeFromTop(3.0f);
-    if (area.height >= 16.0f) {
-        Rect depthRow = area.removeFromTop(16.0f);
+    area.removeFromTop(s * 3.0f);
+    if (area.height >= s * 16.0f) {
+        Rect depthRow = area.removeFromTop(s * 16.0f);
         ui.parameterSlider(depthRow, node.parameter(node.indexOfParameter("depth")), t.accentDim);
     }
 }
 
 void PatcherView::drawBuildBody(Ui& ui, Node& node, const Rect& body) {
+    const float s = bodyScale();
     const Theme& t = theme();
     DrawList& list = ui.draw();
     auto& build = static_cast<BuildNode&>(node);
@@ -1155,7 +1253,7 @@ void PatcherView::drawBuildBody(Ui& ui, Node& node, const Rect& body) {
     // Momentary, deliberately: it engages on press and releases on release,
     // rather than toggling. A build you have to remember to turn off is a build
     // that gets left on.
-    Rect switchArea = area.removeFromTop(52.0f).deflated(2.0f);
+    Rect switchArea = area.removeFromTop(s * 52.0f).deflated(s * 2.0f);
 
     Parameter& engage = node.parameter(node.indexOfParameter(BuildNode::kEngageParam));
 
@@ -1186,31 +1284,32 @@ void PatcherView::drawBuildBody(Ui& ui, Node& node, const Rect& body) {
 
     if (hovered) ui.setTooltip("Hold. Releases on the next bar so the drop lands in time.");
 
-    area.removeFromTop(4.0f);
+    area.removeFromTop(s * 4.0f);
 
     // -- shape -------------------------------------------------------------
-    Rect row = area.removeFromTop(17.0f);
+    Rect row = area.removeFromTop(s * 17.0f);
     ui.parameterSlider(row, node.parameter(node.indexOfParameter("bars")), t.control);
 
-    area.removeFromTop(3.0f);
-    if (area.height >= 17.0f) {
-        Rect curveRow = area.removeFromTop(17.0f);
+    area.removeFromTop(s * 3.0f);
+    if (area.height >= s * 17.0f) {
+        Rect curveRow = area.removeFromTop(s * 17.0f);
         ui.parameterChoice(curveRow.removeFromLeft(curveRow.width * 0.5f - 2.0f),
                            node.parameter(node.indexOfParameter("curve")));
-        curveRow.removeFromLeft(4.0f);
+        curveRow.removeFromLeft(s * 4.0f);
         ui.parameterChoice(curveRow, node.parameter(node.indexOfParameter("release")));
     }
 
     // A build with nothing wired to it is silent and confusing, so say so.
     if (build.stemPlayer() == kInvalidNode && build.colorNode() == kInvalidNode
-        && area.height >= 14.0f) {
-        list.addTextClipped(ui.font(t.fontSmall), area.removeFromTop(14.0f), t.textFaint,
+        && area.height >= s * 14.0f) {
+        list.addTextClipped(ui.font(t.fontSmall), area.removeFromTop(s * 14.0f), t.textFaint,
                             "not wired - pick targets in the inspector",
                             DrawList::Align::Centre);
     }
 }
 
 void PatcherView::drawMixerBody(Ui& ui, Node& node, const Rect& body) {
+    const float s = bodyScale();
     const Theme& t = theme();
     auto& mixer = static_cast<MixerNode&>(node);
 
@@ -1223,9 +1322,9 @@ void PatcherView::drawMixerBody(Ui& ui, Node& node, const Rect& body) {
                     stripWidth - 3.0f, area.height };
 
         const Rect faderArea = strip.removeFromTop(strip.height - 34.0f);
-        const Rect meterArea = faderArea.deflated(0.0f).removeFromRight(6.0f);
+        const Rect meterArea = faderArea.deflated(s * 0.0f).removeFromRight(s * 6.0f);
         Rect gainArea = faderArea;
-        gainArea.removeFromRight(8.0f);
+        gainArea.removeFromRight(s * 8.0f);
 
         Parameter& gain = node.parameter(mixer.gainParam(channel));
         float normalised = gain.normalised();
@@ -1237,9 +1336,9 @@ void PatcherView::drawMixerBody(Ui& ui, Node& node, const Rect& body) {
 
         ui.stereoMeter(meterArea, mixer.channelMeter(channel, 0), mixer.channelMeter(channel, 1), true);
 
-        Rect buttons = strip.removeFromTop(16.0f);
+        Rect buttons = strip.removeFromTop(s * 16.0f);
         const Rect muteArea = buttons.removeFromLeft(buttons.width * 0.5f - 1.0f);
-        buttons.removeFromLeft(2.0f);
+        buttons.removeFromLeft(s * 2.0f);
 
         Parameter& mute = node.parameter(mixer.muteParam(channel));
         Parameter& solo = node.parameter(mixer.soloParam(channel));
@@ -1258,9 +1357,9 @@ void PatcherView::drawMixerBody(Ui& ui, Node& node, const Rect& body) {
     Rect master{ area.left() + stripWidth * static_cast<float>(channels), area.top(),
                  stripWidth - 3.0f, area.height };
     const Rect masterFader = master.removeFromTop(master.height - 18.0f);
-    const Rect masterMeter = masterFader.deflated(0.0f).removeFromRight(6.0f);
+    const Rect masterMeter = masterFader.deflated(s * 0.0f).removeFromRight(s * 6.0f);
     Rect masterGainArea = masterFader;
-    masterGainArea.removeFromRight(8.0f);
+    masterGainArea.removeFromRight(s * 8.0f);
 
     Parameter& masterGain = node.parameter(node.indexOfParameter("mastergain"));
     float masterNormalised = masterGain.normalised();
@@ -1272,6 +1371,7 @@ void PatcherView::drawMixerBody(Ui& ui, Node& node, const Rect& body) {
 }
 
 void PatcherView::drawPluginBody(Ui& ui, Node& node, const Rect& body) {
+    const float s = bodyScale();
     const Theme& t = theme();
     DrawList& list = ui.draw();
     auto& plugin = static_cast<vst2::VstNode&>(node);
@@ -1279,7 +1379,7 @@ void PatcherView::drawPluginBody(Ui& ui, Node& node, const Rect& body) {
     Rect area = body;
 
     // -- status ------------------------------------------------------------
-    Rect statusRow = area.removeFromTop(14.0f);
+    Rect statusRow = area.removeFromTop(s * 14.0f);
     const auto& description = plugin.pluginDescription();
 
     std::string status = vst2::toString(description.architecture);
@@ -1289,14 +1389,14 @@ void PatcherView::drawPluginBody(Ui& ui, Node& node, const Rect& body) {
     list.addTextClipped(ui.font(t.fontSmall), statusRow,
                         plugin.pluginLoaded() ? t.textFaint : t.danger, status);
 
-    area.removeFromTop(2.0f);
+    area.removeFromTop(s * 2.0f);
 
     // -- editor / reload ---------------------------------------------------
-    Rect buttons = area.removeFromTop(20.0f);
+    Rect buttons = area.removeFromTop(s * 20.0f);
     const bool canEdit = plugin.pluginLoaded() && description.hasEditor;
 
     Rect editorArea = buttons.removeFromLeft(buttons.width - 24.0f);
-    buttons.removeFromLeft(4.0f);
+    buttons.removeFromLeft(s * 4.0f);
 
     if (ui.button(ui.idFrom(&node, 40), editorArea,
                   plugin.editorOpen() ? "close editor" : "open editor",
@@ -1308,7 +1408,7 @@ void PatcherView::drawPluginBody(Ui& ui, Node& node, const Rect& body) {
     if (ui.isHot(ui.idFrom(&node, 41)))
         ui.setTooltip("Reload the plugin, keeping its current state");
 
-    area.removeFromTop(3.0f);
+    area.removeFromTop(s * 3.0f);
 
     // -- the first few plugin parameters, as knobs -------------------------
     // Everything is reachable in the inspector; the node shows enough to
@@ -1327,17 +1427,18 @@ void PatcherView::drawPluginBody(Ui& ui, Node& node, const Rect& body) {
             ui.parameterKnob(knobArea, node.parameter(index), t.categoryColour(node.category()), false);
         }
     } else if (area.height > 18.0f) {
-        Rect mixRow = area.removeFromTop(18.0f);
+        Rect mixRow = area.removeFromTop(s * 18.0f);
         ui.parameterSlider(mixRow, node.parameter(node.indexOfParameter("drywet")), t.accent, false);
     }
 }
 
 void PatcherView::drawGenericBody(Ui& ui, Node& node, const Rect& body) {
+    const float s = bodyScale();
     const Theme& t = theme();
     const Colour accent = t.categoryColour(node.category());
 
     Rect area = body;
-    const float rowHeight = 19.0f;
+    const float rowHeight = s * 19.0f;
 
     for (int i = 0; i < node.numParameters(); ++i) {
         if (area.height < rowHeight) break;
@@ -1359,7 +1460,7 @@ void PatcherView::drawGenericBody(Ui& ui, Node& node, const Rect& body) {
                 break;
         }
 
-        area.removeFromTop(1.0f);
+        area.removeFromTop(s * 1.0f);
     }
 }
 

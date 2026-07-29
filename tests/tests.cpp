@@ -987,6 +987,61 @@ void testStemSectionPersistence() {
 // Colour engine
 // ---------------------------------------------------------------------------
 
+
+void testStemTempoDetection() {
+    TEST("stem player works a tempo back from the stem length");
+
+    StemPlayerNode stems;
+
+    // 16 bars of 4/4 at 128 bpm is exactly 30 seconds.
+    auto buffer = std::make_shared<SampleBuffer>(2, static_cast<std::int64_t>(48000.0 * 30.0), 48000.0);
+    stems.setStemFromBuffer(0, buffer, "sixteen-bars");
+
+    int bars = 0;
+    const double bpm = stems.detectBpm(4, &bars);
+
+    CHECK_CLOSE(bpm, 128.0, 0.01);
+    CHECK(bars == 16);
+
+    // Setting it by hand overrides, and zero goes back to following the project.
+    stems.setStemBpm(174.0);
+    CHECK_CLOSE(stems.stemBpm(), 174.0, 1e-6);
+    stems.setStemBpm(0.0);
+    CHECK_CLOSE(stems.stemBpm(), 0.0, 1e-6);
+}
+
+void testStemSpectrum() {
+    TEST("stem spectrum separates low from high");
+
+    // A low sine and a high sine, each in its own stem.
+    const double rate = 48000.0;
+    const std::int64_t frames = static_cast<std::int64_t>(rate);
+
+    auto low = std::make_shared<SampleBuffer>(1, frames, rate);
+    auto high = std::make_shared<SampleBuffer>(1, frames, rate);
+    for (std::int64_t i = 0; i < frames; ++i) {
+        const double t = static_cast<double>(i) / rate;
+        low->channelForWrite(0)[i] = static_cast<float>(std::sin(2.0 * 3.14159265358979 * 60.0 * t));
+        high->channelForWrite(0)[i] = static_cast<float>(std::sin(2.0 * 3.14159265358979 * 8000.0 * t));
+    }
+
+    StemPlayerNode stems;
+    stems.setStemFromBuffer(0, low, "low");
+    stems.setStemFromBuffer(1, high, "high");
+
+    const auto& lowSpectrum = stems.spectrum(0);
+    const auto& highSpectrum = stems.spectrum(1);
+    CHECK(!lowSpectrum.empty());
+    CHECK(!highSpectrum.empty());
+
+    // Sampled from the middle, away from the filters settling at the start.
+    const auto& a = lowSpectrum[lowSpectrum.size() / 2];
+    const auto& b = highSpectrum[highSpectrum.size() / 2];
+
+    CHECK(a.low > a.high);
+    CHECK(b.high > b.low);
+}
+
 void testColorNeutralIsUnchanged() {
     TEST("colour engine leaves the middle untouched");
 
@@ -1151,6 +1206,8 @@ int main() {
     testStemSectionLaunch();
     testStemImmediateLaunch();
     testStemSectionPersistence();
+    testStemTempoDetection();
+    testStemSpectrum();
     testColorNeutralIsUnchanged();
     testColorPresetRebinds();
     testColorPresetReportsMissing();

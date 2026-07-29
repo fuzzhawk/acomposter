@@ -87,6 +87,14 @@ private:
         bool valid() const { return node != kInvalidNode; }
     };
 
+    // Node bodies are authored in unscaled units and multiplied by this, so a
+    // row keeps its share of the node at every zoom. Without it the layout was
+    // fixed-size inside a rect that was not: zoomed in it huddled at the top,
+    // zoomed out it overflowed and the last controls fell off the bottom - and
+    // since wheel zoom is multiplicative it almost never lands back on exactly
+    // 1.0, so zooming out and back left the node subtly wrong.
+    float bodyScale() const noexcept { return zoom_; }
+
     Rect nodeBounds(const Node& node, const Rect& viewBounds) const;
     float nodeHeight(const Node& node) const;
     float nodeWidth(const Node& node) const;

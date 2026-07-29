@@ -87,6 +87,7 @@ bool StemPlayerNode::loadStem(int slot, const std::string& utf8Path, std::string
     }
 
     Stem& stem = stems_[static_cast<std::size_t>(slot)];
+    buildSpectrum(*buffer, stem.spectrum, 512);
     stem.buffer.publish(std::move(buffer));
     stem.path = utf8Path;
     if (stem.name.empty() || stem.name == kDefaultStemNames[slot])
@@ -96,11 +97,23 @@ bool StemPlayerNode::loadStem(int slot, const std::string& utf8Path, std::string
     return true;
 }
 
+void StemPlayerNode::setStemFromBuffer(int slot, std::shared_ptr<SampleBuffer> buffer,
+                                       std::string name) {
+    if (slot < 0 || slot >= kMaxStems || !buffer) return;
+
+    Stem& stem = stems_[static_cast<std::size_t>(slot)];
+    buildSpectrum(*buffer, stem.spectrum, 512);
+    stem.buffer.publish(std::move(buffer));
+    stem.path.clear();
+    if (!name.empty()) stem.name = std::move(name);
+}
+
 void StemPlayerNode::clearStem(int slot) {
     if (slot < 0 || slot >= kMaxStems) return;
     Stem& stem = stems_[static_cast<std::size_t>(slot)];
     stem.buffer.clear();
     stem.path.clear();
+    stem.spectrum.clear();
     stem.name = kDefaultStemNames[slot];
 }
 
@@ -150,6 +163,165 @@ float StemPlayerNode::meterLevel(int slot, int channel) const noexcept {
     if (slot < 0 || slot >= kMaxStems) return 0.0f;
     return stems_[static_cast<std::size_t>(slot)].meter[channel & 1]
         .load(std::memory_order_relaxed);
+}
+
+
+// ---------------------------------------------------------------------------
+// Tempo
+// ---------------------------------------------------------------------------
+
+void StemPlayerNode::setStemBpm(double bpm) noexcept {
+    stemBpm_ = bpm > 0.0 ? clampValue(bpm, 20.0, 400.0) : 0.0;
+    tempoSource_ = stemBpm_ > 0.0 ? "set by hand" : "project";
+}
+
+double StemPlayerNode::detectBpm(int beatsPerBar, int* outBars) const {
+    if (outBars) *outBars = 0;
+    if (beatsPerBar <= 0) return 0.0;
+
+    double longestSeconds = 0.0;
+    double hint = 0.0;
+    for (int i = 0; i < kMaxStems; ++i) {
+        const Stem& stem = stems_[static_cast<std::size_t>(i)];
+        const auto buffer = stem.buffer.shared();
+        if (!buffer || buffer->empty()) continue;
+
+        longestSeconds = std::max(longestSeconds, buffer->durationSeconds());
+        // Exporters put the tempo in the file name far more often than in the
+        // file, and it settles an otherwise unanswerable question.
+        if (hint <= 0.0 && !stem.path.empty()) hint = audiofile::guessBpmFromName(stem.path);
+        if (hint <= 0.0 && !stem.name.empty()) hint = audiofile::guessBpmFromName(stem.name);
+    }
+    if (longestSeconds < 1.0) return 0.0;
+
+    // Length alone does not determine tempo. A thirty second bounce is *exactly*
+    // a whole number of bars at eighteen different tempos between 60 and 200,
+    // and no amount of arithmetic will tell you which one the music is in. So
+    // this picks the most likely rather than the only: whole-bar candidates,
+    // ranked by how ordinary the bar count and the tempo are, and pulled hard
+    // toward the file name's tempo when there is one.
+    double bestBpm = 0.0;
+    double bestScore = 1.0e9;
+    int bestBars = 0;
+
+    for (int bars = 1; bars <= 2048; ++bars) {
+        const double beats = static_cast<double>(bars) * beatsPerBar;
+        const double bpm = beats * 60.0 / longestSeconds;
+        if (bpm < 60.0 || bpm > 200.0) continue;
+
+        // Most music is an integer tempo; a fair amount is a half.
+        const double toWhole = std::abs(bpm - std::round(bpm));
+        const double toHalf = std::abs(bpm * 2.0 - std::round(bpm * 2.0)) * 0.5;
+        const double error = std::min(toWhole, toHalf);
+        if (error > 0.02) continue;
+
+        // Songs come in powers of two far more often than not.
+        const bool powerOfTwo = (bars & (bars - 1)) == 0;
+        const double barScore = powerOfTwo ? 0.25
+                              : (bars % 8 == 0) ? 0.5
+                              : (bars % 4 == 0) ? 0.8 : 1.5;
+
+        // Distance from a typical tempo, in octaves - so 64 and 256 are equally
+        // unlikely relative to 128, which is what halving and doubling means.
+        const double tempoScore = std::abs(std::log2(bpm / 128.0));
+
+        double score = barScore * (1.0 + tempoScore * 2.0) + error * 100.0;
+        if (hint > 0.0) score += std::abs(std::log2(bpm / hint)) * 4.0;
+
+        if (score < bestScore) {
+            bestScore = score;
+            bestBpm = std::round(bpm * 2.0) / 2.0;
+            bestBars = bars;
+        }
+    }
+
+    if (bestBars == 0) return 0.0;
+
+    if (outBars) *outBars = bestBars;
+    return bestBpm;
+}
+
+// ---------------------------------------------------------------------------
+// Spectral overview
+// ---------------------------------------------------------------------------
+
+const std::vector<StemPlayerNode::SpectralBand>& StemPlayerNode::spectrum(int slot) const {
+    static const std::vector<SpectralBand> empty;
+    if (slot < 0 || slot >= kMaxStems) return empty;
+    return stems_[static_cast<std::size_t>(slot)].spectrum;
+}
+
+void StemPlayerNode::buildSpectrum(const SampleBuffer& buffer, std::vector<SpectralBand>& out,
+                                   int buckets) {
+    out.clear();
+    if (buffer.empty() || buckets <= 0) return;
+
+    out.resize(static_cast<std::size_t>(buckets));
+
+    const std::int64_t frames = buffer.frames();
+    const std::int64_t perBucket = std::max<std::int64_t>(1, frames / buckets);
+    const double rate = buffer.sampleRate() > 0.0 ? buffer.sampleRate() : 48000.0;
+
+    // Two one-pole splits at roughly 200 Hz and 2 kHz. Crude, but this is a
+    // picture of where the weight sits, not a measurement.
+    //
+    // The filters run on every sample; only the accumulation is decimated.
+    // Skipping samples on the way *in* is undersampling, and it folds the top
+    // of the spectrum down into the middle - a 9 kHz stem came out reading the
+    // same as an 800 Hz one, which is precisely the distinction the strip
+    // exists to draw.
+    constexpr int kStep = 4;
+    const double lowCoeff = std::exp(-2.0 * 3.14159265358979323846 * 200.0 / rate);
+    const double highCoeff = std::exp(-2.0 * 3.14159265358979323846 * 2000.0 / rate);
+
+    double lowState = 0.0, highState = 0.0;
+    float peak = 0.0f;
+
+    for (int b = 0; b < buckets; ++b) {
+        const std::int64_t start = static_cast<std::int64_t>(b) * perBucket;
+        const std::int64_t end = std::min(frames, start + perBucket);
+
+        double lowSum = 0.0, midSum = 0.0, highSum = 0.0;
+        std::int64_t counted = 0;
+
+        for (std::int64_t i = start; i < end; ++i) {
+            double sample = 0.0;
+            for (int c = 0; c < buffer.channels(); ++c) sample += buffer.channel(c)[i];
+            sample /= std::max(1, buffer.channels());
+
+            lowState = sample + lowCoeff * (lowState - sample);
+            highState = sample + highCoeff * (highState - sample);
+
+            if ((i % kStep) != 0) continue;
+
+            const double low = lowState;
+            const double mid = highState - lowState;
+            const double high = sample - highState;
+
+            lowSum += low * low;
+            midSum += mid * mid;
+            highSum += high * high;
+            ++counted;
+        }
+
+        if (counted > 0) {
+            SpectralBand& band = out[static_cast<std::size_t>(b)];
+            band.low = static_cast<float>(std::sqrt(lowSum / static_cast<double>(counted)));
+            band.mid = static_cast<float>(std::sqrt(midSum / static_cast<double>(counted)));
+            band.high = static_cast<float>(std::sqrt(highSum / static_cast<double>(counted)));
+            peak = std::max(peak, std::max(band.low, std::max(band.mid, band.high)));
+        }
+    }
+
+    // Normalised against the stem's own peak, so a quiet stem still reads as
+    // whatever colour it is rather than as black.
+    if (peak > 1.0e-6f) {
+        for (SpectralBand& band : out) {
+            band.low /= peak;
+            band.mid /= peak;
+            band.high /= peak;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -271,7 +443,11 @@ void StemPlayerNode::process(ProcessContext& ctx) {
 
     const TransportState& transport = *ctx.transport;
     const double beatsPerBar = static_cast<double>(std::max(1, transport.timeSigNumerator));
-    const double bpm = transport.bpm > 0.0 ? transport.bpm : 120.0;
+    // The stems' own tempo when one is known. A set holding two songs at
+    // different tempos needs each stem player reading its own file at the rate
+    // it was bounced at, while the transport keeps one grid for the whole patch.
+    const double bpm = stemBpm_ > 0.0 ? stemBpm_
+                     : (transport.bpm > 0.0 ? transport.bpm : 120.0);
 
     const bool follow = paramValue(pFollow_) > 0.5f;
     if (follow && !transport.playing) {
@@ -472,6 +648,8 @@ void StemPlayerNode::saveExtraState(JsonValue& out) const {
         sections.push(entry);
     }
     out.set("sections", sections);
+    out.set("stemBpm", stemBpm_);
+    out.set("tempoSource", tempoSource_);
 }
 
 void StemPlayerNode::loadExtraState(const JsonValue& in) {
@@ -491,6 +669,9 @@ void StemPlayerNode::loadExtraState(const JsonValue& in) {
             if (!path.empty()) loadStem(slot, path, nullptr);
         }
     }
+
+    stemBpm_ = in.getDouble("stemBpm", 0.0);
+    tempoSource_ = in.getString("tempoSource", "project");
 
     sections_.clear();
     if (const JsonValue* sections = in.find("sections"); sections && sections->isArray()) {
