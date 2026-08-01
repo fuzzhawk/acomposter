@@ -318,6 +318,16 @@ bool Ui::button(UiId control, const Rect& rect, std::string_view text,
             break;
     }
 
+    // A disabled button loses its emphasis, whatever style it is. Primary and
+    // Toggle otherwise kept their accent fill and drew faint text on it, which
+    // reads as an enabled button whose label happens to be unreadable rather
+    // than as one that cannot be pressed - "add to patch" with nothing selected
+    // was exactly that.
+    if (!enabled) {
+        fill = t.widgetBackground;
+        borderColour = style == ButtonStyle::Ghost ? borderColour : t.border;
+    }
+
     if (enabled && hovered && style != ButtonStyle::Primary)
         fill = style == ButtonStyle::Ghost ? t.widgetHover.withAlpha(0.6f) : fill.brightened(1.35f);
     if (enabled && held)
