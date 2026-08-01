@@ -259,6 +259,17 @@ bool createDirectories(const std::string& utf8Path) {
 #endif
 }
 
+std::string safeFileName(std::string_view name, std::string_view fallback) {
+    std::string out;
+    for (const char c : name) {
+        const auto u = static_cast<unsigned char>(c);
+        if (std::isalnum(u) || c == '-' || c == '_') out.push_back(c);
+        else if (!out.empty() && out.back() != '-') out.push_back('-');
+    }
+    while (!out.empty() && out.back() == '-') out.pop_back();
+    return out.empty() ? std::string(fallback) : out;
+}
+
 std::vector<DirectoryEntry> listDirectory(const std::string& utf8Path,
                                           const std::vector<std::string>& extensions) {
     std::vector<DirectoryEntry> entries;

@@ -6,6 +6,7 @@
 #include "../nodes/NodeFactory.h"
 #include "../nodes/SamplePlayerNode.h"
 #include "../nodes/BuildNode.h"
+#include "../nodes/ColorNode.h"
 #include "../nodes/StemPlayerNode.h"
 #include "../platform/FileDialog.h"
 #include "../vst2/BridgedVst2Plugin.h"
@@ -207,6 +208,46 @@ bool Application::initialise() {
         ui_.notify("loaded \"" + tag->defaultChain + "\"  ("
                        + std::to_string(placed) + " plugins)",
                    missing.empty() ? ui::theme().accent : ui::theme().warning, 3.0f);
+    };
+    inspector_.onSaveColour = [this](NodeId nodeId, const std::string& name) {
+        auto* colour = dynamic_cast<ColorNode*>(engine_.graph().node(nodeId));
+        if (!colour || !library_.colours().isOpen()) return;
+
+        if (library_.colours().save(name, colour->savePreset(name, engine_.graph()))) {
+            ui_.notify("saved colour \"" + name + "\"  ("
+                           + std::to_string(colour->targets().size()) + " targets)",
+                       ui::theme().accent, 2.5f);
+        } else {
+            ui_.notify("could not write that colour preset", ui::theme().danger, 4.0f);
+        }
+    };
+    inspector_.onLoadColour = [this](NodeId nodeId, const std::string& name) {
+        auto* colour = dynamic_cast<ColorNode*>(engine_.graph().node(nodeId));
+        if (!colour) return;
+
+        JsonValue preset;
+        if (!library_.colours().load(name, preset)) {
+            ui_.notify("could not read \"" + name + "\"", ui::theme().danger, 4.0f);
+            return;
+        }
+
+        std::vector<std::string> unmatched;
+        const int bound = colour->loadPreset(preset, engine_.graph(), &unmatched);
+        markModified();
+
+        // A preset binds by parameter name against whatever plugins are
+        // actually on the rack, so a partial match is the normal case rather
+        // than a failure - but it has to be said, or the missing half is only
+        // discovered by the sound being wrong.
+        if (unmatched.empty()) {
+            ui_.notify("bound " + std::to_string(bound) + " targets", ui::theme().accent, 2.5f);
+        } else {
+            std::string message = std::to_string(bound) + " bound, "
+                                + std::to_string(unmatched.size()) + " not found: "
+                                + unmatched.front();
+            if (unmatched.size() > 1) message += " and others";
+            ui_.notify(message, ui::theme().warning, 6.0f);
+        }
     };
     inspector_.onSaveChain = [this](NodeId player, int slot, const std::string& name) {
         if (!library_.chains().isOpen()) {
@@ -531,6 +572,16 @@ void Application::serviceBackground() {
     // A plugin editor opened from the canvas.
     if (const NodeId request = patcher_.consumeEditorRequest(); request != kInvalidNode)
         togglePluginEditor(request);
+
+    // A stem's output port was right-clicked: show its rack. The inspector is
+    // opened if it was hidden, because otherwise the gesture would appear to do
+    // nothing at all.
+    if (const auto rack = patcher_.consumeRackRequest(); rack.valid()) {
+        showInspector_ = true;
+        inspector_.expandStemRack(rack.slot);
+        ui_.notify("stem " + std::to_string(rack.slot + 1) + " rack",
+                   ui::theme().accent, 2.0f);
+    }
 }
 
 float Application::browserWidthPx() const { return ui::theme().scaled(browserWidth_); }

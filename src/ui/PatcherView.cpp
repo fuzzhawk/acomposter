@@ -317,6 +317,12 @@ NodeId PatcherView::consumeEditorRequest() {
     return request;
 }
 
+PatcherView::RackRequest PatcherView::consumeRackRequest() {
+    const RackRequest request = rackRequest_;
+    rackRequest_ = RackRequest{};
+    return request;
+}
+
 // ---------------------------------------------------------------------------
 // Editing
 // ---------------------------------------------------------------------------
@@ -1358,7 +1364,27 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
     area.removeFromTop(s * 3.0f);
 
     // -- tempo -------------------------------------------------------------
-    Rect tempoRow = area.removeFromTop(s * 18.0f);
+    // 20 rather than 18: a button's label needs its font height plus the
+    // padding the style puts around it, and at 18 the toggle lost the tail of
+    // its g.
+    Rect tempoRow = area.removeFromTop(s * 20.0f);
+
+    // The routing toggle *leads* the row. Trailing it put it at the extreme
+    // right edge of the widest node in the application, which on any ordinary
+    // window sits underneath the inspector - drawn behind it and clipped out of
+    // the canvas, so it was invisible and could not be pressed. That is exactly
+    // how it behaved, and no amount of fixing the overlap with its neighbour was
+    // ever going to help, because the neighbour was not the problem.
+    const Rect matrixToggle = tempoRow.removeFromLeft(s * 74.0f);
+    tempoRow.removeFromLeft(s * 4.0f);
+
+    if (ui.button(ui.idFrom(&node, 422), matrixToggle,
+                  stems.matrixOpen ? "routing <" : "routing >",
+                  stems.matrixOpen ? Ui::ButtonStyle::Toggle : Ui::ButtonStyle::Normal,
+                  stems.matrixOpen))
+        stems.matrixOpen = !stems.matrixOpen;
+    if (ui.isHot(ui.idFrom(&node, 422)))
+        ui.setTooltip("Show the routing matrix beside the strips");
 
     const double stemBpm = stems.stemBpm();
     const double transportBpm = engine_ ? engine_->transport().bpm() : 120.0;
@@ -1366,10 +1392,10 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
 
     char tempoText[64];
     std::snprintf(tempoText, sizeof(tempoText), "%.2f bpm", effective);
-    list.addTextClipped(ui.font(t.fontSmall), tempoRow.removeFromLeft(tempoRow.width * 0.34f),
+    list.addTextClipped(ui.font(t.fontSmall), tempoRow.removeFromLeft(tempoRow.width * 0.30f),
                         stemBpm > 0.0 ? t.text : t.textFaint, tempoText);
 
-    if (ui.button(ui.idFrom(&node, 420), tempoRow.removeFromLeft(tempoRow.width * 0.42f),
+    if (ui.button(ui.idFrom(&node, 420), tempoRow.removeFromLeft(tempoRow.width * 0.44f),
                   "detect", Ui::ButtonStyle::Normal)) {
         int bars = 0;
         const double detected = stems.detectBpm(
@@ -1386,22 +1412,7 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
     if (ui.isHot(ui.idFrom(&node, 420)))
         ui.setTooltip("Work the tempo back from the length of the longest stem");
 
-    tempoRow.removeFromLeft(s * 3.0f);
-
-    // The matrix toggle is carved off the right *before* anything is drawn into
-    // what remains. Drawing it afterwards left it underneath the button beside
-    // it, and an overlapped control never sees the press - the widget drawn
-    // first claims it.
-    const Rect matrixToggle = tempoRow.removeFromRight(s * 22.0f);
-    tempoRow.removeFromRight(s * 3.0f);
-
-    if (ui.button(ui.idFrom(&node, 422), matrixToggle,
-                  stems.matrixOpen ? "<" : ">",
-                  stems.matrixOpen ? Ui::ButtonStyle::Toggle : Ui::ButtonStyle::Normal,
-                  stems.matrixOpen))
-        stems.matrixOpen = !stems.matrixOpen;
-    if (ui.isHot(ui.idFrom(&node, 422)))
-        ui.setTooltip("Show the routing matrix");
+    tempoRow.removeFromLeft(s * 4.0f);
 
     // Pushes the stem tempo onto the project, which is what you want once the
     // stems are the thing everything else has to line up with.
@@ -2469,6 +2480,20 @@ void PatcherView::handleContextMenu(Ui& ui, const Rect& bounds) {
     if (ui.hovering(bounds) && input.mousePressed[static_cast<int>(MouseButton::Right)]
         && !ui.popupOpen(menuId)) {
         contextMenuWorld_ = screenToWorld(input.mousePosition, bounds);
+
+        // A right-click on one of a stem player's outputs is not a request for
+        // the add-node palette - it is a request for that stem's rack. The rack
+        // controls live in the inspector, so the gesture selects the player and
+        // asks the inspector to open that slot rather than duplicating save,
+        // load and tidy into a canvas menu.
+        if (const PortHit port = hitTestPorts(ui, bounds);
+            port.valid() && !port.isInput && engine_) {
+            if (dynamic_cast<const StemPlayerNode*>(engine_->graph().node(port.node))) {
+                select(port.node, false);
+                rackRequest_ = RackRequest{ port.node, static_cast<int>(port.port) };
+                return;
+            }
+        }
 
         // Right-clicking a node selects it first, so the menu acts on what was
         // clicked rather than on a stale selection.

@@ -20,6 +20,7 @@
 #include "../src/dsp/Fft.h"
 #include "../src/library/AudioAnalysis.h"
 #include "../src/library/FileIndex.h"
+#include "../src/library/PresetStore.h"
 #include "../src/library/Slicer.h"
 #include "../src/net/WebSocket.h"
 #include "../src/net/Sha1.h"
@@ -1695,6 +1696,105 @@ std::shared_ptr<SampleBuffer> makeNoise(double seconds, double decay, std::uint3
     return buffer;
 }
 
+void testColourPresetBindsByName() {
+    TEST("a colour preset with no node named binds by parameter name");
+
+    BlockCounter clock{ 0 };
+    Graph graph;
+    graph.setClock(&clock);
+    graph.prepare(48000.0, 128);
+
+    // Two filters, as a stem rack would have.
+    const NodeId a = graph.addNode(std::make_unique<FilterNode>());
+    const NodeId b = graph.addNode(std::make_unique<FilterNode>());
+    graph.node(a)->setName("bass filter");
+    graph.node(b)->setName("pad filter");
+
+    auto colourOwner = std::make_unique<ColorNode>();
+    ColorNode* colour = colourOwner.get();
+    graph.addNode(std::move(colourOwner));
+
+    JsonValue preset = JsonValue::object();
+    JsonValue targets = JsonValue::array();
+
+    JsonValue entry = JsonValue::object();
+    entry.set("param", "Frequency");     // no node, no type
+    entry.set("red", 0.1f);
+    entry.set("neutral", 0.4f);
+    entry.set("blue", 0.9f);
+    entry.set("depth", 1.0f);
+    entry.set("enabled", true);
+    targets.push(entry);
+
+    JsonValue missing = JsonValue::object();
+    missing.set("param", "Nothing Has This");
+    targets.push(missing);
+
+    preset.set("targets", std::move(targets));
+
+    std::vector<std::string> unmatched;
+    const int bound = colour->loadPreset(preset, graph, &unmatched);
+
+    // Every match, not just the first: one preset naming "Mix" has to reach the
+    // reverb on all eight stems.
+    CHECK(bound == 2);
+    CHECK(colour->targets().size() == 2);
+
+    // What it could not find is reported rather than silently dropped.
+    CHECK(unmatched.size() == 1);
+    CHECK(unmatched[0] == "Nothing Has This");
+
+    // The ends came from the preset, and both filters got them.
+    for (const ColorTarget& target : colour->targets()) {
+        CHECK_CLOSE(target.redValue, 0.1, 1e-5);
+        CHECK_CLOSE(target.blueValue, 0.9, 1e-5);
+        CHECK(target.paramName == "Frequency");
+    }
+
+    // Round trip: saving what was just loaded and loading it back is stable,
+    // this time bound by node name rather than by parameter name alone.
+    const JsonValue saved = colour->savePreset("test", graph);
+    std::vector<std::string> secondUnmatched;
+    CHECK(colour->loadPreset(saved, graph, &secondUnmatched) == 2);
+    CHECK(secondUnmatched.empty());
+}
+
+void testPresetStoreRoundTrip() {
+    TEST("the preset store keeps a name that is not a file name");
+
+    const std::string root = "acomposter-test-tmp/presets";
+    library::PresetStore store;
+    store.open(root, "colours");
+    for (const DirectoryEntry& file : listDirectory(store.directory(), { ".json" }))
+        deleteFile(file.fullPath);
+
+    JsonValue document = JsonValue::object();
+    document.set("value", 42);
+
+    CHECK(store.save("bass: tight / washed", document));
+    CHECK(store.exists("bass: tight / washed"));
+
+    const auto names = store.names();
+    CHECK(std::find(names.begin(), names.end(), "bass: tight / washed") != names.end());
+
+    JsonValue loaded;
+    CHECK(store.load("bass: tight / washed", loaded));
+    CHECK(loaded.getInt("value", 0) == 42);
+
+    // Seeding never overwrites something already there, which is what keeps an
+    // edited preset edited across an update.
+    JsonValue replacement = JsonValue::object();
+    replacement.set("value", 7);
+    CHECK(!store.saveIfAbsent("bass: tight / washed", replacement));
+    CHECK(store.load("bass: tight / washed", loaded));
+    CHECK(loaded.getInt("value", 0) == 42);
+
+    CHECK(store.saveIfAbsent("brand new", replacement));
+
+    CHECK(store.remove("bass: tight / washed"));
+    CHECK(!store.exists("bass: tight / washed"));
+}
+
 void testWebSocketHandshakeAndFrames() {
     TEST("the WebSocket handshake and framing match the standard");
 
@@ -2638,6 +2738,8 @@ int main() {
     testNoteNaming();
     testAnalysisSeparatesSounds();
     testFilenameNumbersAndPitchClass();
+    testColourPresetBindsByName();
+    testPresetStoreRoundTrip();
     testWebSocketHandshakeAndFrames();
     testClassifierNamesWhatItHears();
     testInstrumentTagsMatchByName();

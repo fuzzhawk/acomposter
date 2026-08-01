@@ -213,6 +213,42 @@ int ColorNode::loadPreset(const JsonValue& preset, const Graph& graph,
             }
         }
 
+        // A preset that names no node at all binds by parameter name across
+        // everything on the graph. That is how the shipped presets work, and it
+        // is the only thing that *can* work for somebody else's plugins: no
+        // commercial plugin has a stable parameter map, but almost every filter
+        // has a control called "Frequency" and almost every reverb has "Mix".
+        if (!match && wantNode.empty() && wantType.empty() && !wantParam.empty()) {
+            for (const auto& candidate : graph.nodes()) {
+                if (candidate->id() == id()) continue;
+
+                for (int p = 0; p < candidate->numParameters(); ++p) {
+                    if (candidate->parameter(p).name() != wantParam) continue;
+                    if (!candidate->parameter(p).automatable()) continue;
+
+                    // Every match, not just the first: one preset naming "Mix"
+                    // should reach the reverb on all eight stems.
+                    ColorTarget wide;
+                    wide.address = ParamAddress{ candidate->id(), p };
+                    wide.nodeName = candidate->name();
+                    wide.paramName = candidate->parameter(p).name();
+                    wide.redValue = entry.getFloat("red", 0.5f);
+                    wide.neutralValue = entry.getFloat("neutral", 0.5f);
+                    wide.blueValue = entry.getFloat("blue", 0.5f);
+                    wide.depth = entry.getFloat("depth", 1.0f);
+                    wide.enabled = entry.getBool("enabled", true);
+
+                    targets_.push_back(std::move(wide));
+                    lastWritten_.push_back(0.5f);
+                    ++bound;
+                    match = candidate.get();
+                }
+            }
+
+            if (!match && unmatched) unmatched->push_back(wantParam);
+            continue;
+        }
+
         if (!match || index < 0) {
             if (unmatched) unmatched->push_back(wantNode + " / " + wantParam);
             continue;

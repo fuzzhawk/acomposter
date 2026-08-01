@@ -1,5 +1,7 @@
 #include "StemBrowserView.h"
 
+#include "../nodes/StemPlayerNode.h"
+
 #include "../audio/AudioFile.h"
 
 #include <algorithm>
@@ -149,7 +151,15 @@ void StemBrowserView::drawTagPalette(Ui& ui, Rect& area) {
 
         bool hovered = false, held = false;
         if (ui.buttonBehaviour(ui.idFrom(&tag, 1), chip, hovered, held)) {
-            if (!loadedPath_.empty()) {
+            // Shift is handled *here* rather than in a pass afterwards. A widget
+            // consumes the press it claims, so a second pass testing
+            // mousePressed could never see one - shift-clicking a tag did
+            // nothing at all, however hard it was clicked.
+            if (ui.input().shift) {
+                showTagEditor_ = true;
+                editingTag_ = i;
+                tagNameBuffer_ = tag.name;
+            } else if (!loadedPath_.empty()) {
                 // Pressing the tag a file already has takes it off, so one
                 // control both assigns and clears.
                 library_->setTagForFile(loadedPath_, isCurrent ? std::string() : tag.id);
@@ -165,9 +175,12 @@ void StemBrowserView::drawTagPalette(Ui& ui, Rect& area) {
                                  DrawList::Align::Centre);
 
         if (hovered) {
-            ui.setTooltip(loadedPath_.empty()
-                ? "Select a file first"
-                : (isCurrent ? "Click to clear this tag" : "Tag the selected file as " + tag.name));
+            ui.setTooltip(ui.input().shift
+                ? "Edit this tag"
+                : (loadedPath_.empty()
+                       ? "Select a file first  (shift-click to edit the tag)"
+                       : (isCurrent ? "Click to clear this tag"
+                                    : "Tag the selected file as " + tag.name)));
         }
     }
 
@@ -192,28 +205,58 @@ void StemBrowserView::drawTagPalette(Ui& ui, Rect& area) {
         }
         editorRow.removeFromLeft(t.scaled(8.0f));
 
-        if (ui.button(ui.id("stems.tag.del"), editorRow.removeFromLeft(t.scaled(60.0f)), "delete",
+        // Which output a stem carrying this tag lands on. The tag *is* the
+        // routing - a stem player resolves a tag to a bus - so leaving this out
+        // meant the one thing tags decide could not be changed.
+        ui.label(editorRow.removeFromLeft(t.scaled(30.0f)), "out", t.textFaint, t.fontSmall);
+        int output = palette.tags()[static_cast<std::size_t>(editingTag_)].outputSlot + 1;
+        if (ui.intField(ui.id("stems.tag.out"), editorRow.removeFromLeft(t.scaled(40.0f)),
+                        output, 1, kMaxStems)) {
+            palette.setOutputSlot(editingTag_, output - 1);
+            library_->savePalette();
+        }
+        editorRow.removeFromLeft(t.scaled(8.0f));
+
+        // Colour, from a fixed row of swatches. A full picker is a dialog, and
+        // the point of a tag colour is to be distinguishable at a glance rather
+        // than exact.
+        static const std::uint32_t kSwatches[] = {
+            0xFFE0533Cu, 0xFFC43A2Eu, 0xFFE07A3Cu, 0xFFE0A93Cu, 0xFFB9E03Cu,
+            0xFF4FD98Au, 0xFF3CC8E0u, 0xFF3C7AE0u, 0xFF9B5DE5u, 0xFFE05DBFu,
+            0xFF8A8F98u,
+        };
+
+        for (const std::uint32_t swatch : kSwatches) {
+            if (editorRow.width < t.scaled(20.0f)) break;
+
+            const Rect cell = editorRow.removeFromLeft(t.scaled(16.0f));
+            editorRow.removeFromLeft(t.scaled(2.0f));
+
+            bool swatchHovered = false, swatchHeld = false;
+            if (ui.buttonBehaviour(ui.id("stems.tag.colour." + std::to_string(swatch)),
+                                   cell, swatchHovered, swatchHeld)) {
+                palette.setColour(editingTag_, swatch);
+                library_->savePalette();
+            }
+
+            const Colour colour = fromArgb(swatch);
+            ui.draw().addRectFilled(cell.deflated(t.scaled(2.0f)),
+                                    swatchHovered ? colour.brightened(1.3f) : colour, 2.0f);
+            if (palette.tags()[static_cast<std::size_t>(editingTag_)].colour == swatch)
+                ui.draw().addRect(cell, t.text, 1.5f, 2.0f);
+        }
+
+        if (ui.button(ui.id("stems.tag.del"), editorRow.removeFromRight(t.scaled(60.0f)), "delete",
                       Ui::ButtonStyle::Danger)) {
             palette.remove(editingTag_);
             library_->savePalette();
             editingTag_ = -1;
         }
-        editorRow.removeFromLeft(t.scaled(8.0f));
+    } else {
+        ui.draw().addTextClipped(ui.font(t.fontSmall), editorRow, t.textFaint,
+                                 "shift-click a tag to rename, recolour or reroute it");
     }
 
-    ui.draw().addTextClipped(ui.font(t.fontSmall), editorRow, t.textFaint,
-                             "shift-click a tag to rename or recolour it");
-
-    // Shift-click picks a tag up for editing without assigning it.
-    if (ui.input().shift) {
-        for (int i = 0; i < palette.count(); ++i) {
-            if (ui.isHot(ui.idFrom(&palette.tags()[static_cast<std::size_t>(i)], 1))
-                && ui.input().mousePressed[static_cast<int>(MouseButton::Left)]) {
-                editingTag_ = i;
-                tagNameBuffer_ = palette.tags()[static_cast<std::size_t>(i)].name;
-            }
-        }
-    }
 }
 
 void StemBrowserView::drawWaveform(Ui& ui, const Rect& bounds) {

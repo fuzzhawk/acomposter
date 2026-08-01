@@ -1,6 +1,7 @@
 #include "Library.h"
 
 #include "../core/FileIo.h"
+#include "ColourDefaults.h"
 
 #include <algorithm>
 #include <cctype>
@@ -95,6 +96,9 @@ bool Library::open(const std::string& utf8RootDirectory, int* outSkipped) {
     }
 
     chains_.open(root_);
+    colours_.open(root_, "colours");
+    // Seeded once. An edited preset is never overwritten.
+    seedColourPresets(colours_);
 
     for (const DirectoryEntry& file : listDirectory(entriesDirectory, { kEntryExtension })) {
         if (file.isDirectory) continue;

@@ -7,22 +7,6 @@
 #include <cctype>
 
 namespace acm::library {
-namespace {
-
-// File names have to survive being typed by hand and copied between machines,
-// so they are reduced rather than trusted.
-std::string safeFileName(const std::string& name) {
-    std::string out;
-    for (char c : name) {
-        const unsigned char u = static_cast<unsigned char>(c);
-        if (std::isalnum(u) || c == '-' || c == '_') out.push_back(c);
-        else if (!out.empty() && out.back() != '-') out.push_back('-');
-    }
-    while (!out.empty() && out.back() == '-') out.pop_back();
-    return out.empty() ? std::string("chain") : out;
-}
-
-} // namespace
 
 void ChainStore::open(const std::string& utf8LibraryRoot) {
     if (utf8LibraryRoot.empty()) { directory_.clear(); return; }
@@ -31,7 +15,7 @@ void ChainStore::open(const std::string& utf8LibraryRoot) {
 }
 
 std::string ChainStore::pathFor(const std::string& name) const {
-    return pathJoin(directory_, safeFileName(name) + ".json");
+    return pathJoin(directory_, safeFileName(name, "chain") + ".json");
 }
 
 std::vector<std::string> ChainStore::names() const {

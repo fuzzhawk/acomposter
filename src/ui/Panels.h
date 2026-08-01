@@ -68,6 +68,13 @@ public:
     // `node` is whatever the patcher currently has focused.
     void render(Ui& ui, const Rect& bounds, NodeId node);
 
+    // Opens one stem's rack, as if its row had been clicked. The canvas calls
+    // this when an output port is right-clicked, so the gesture lands on the
+    // controls that already exist instead of a second set of them. Which player
+    // it belongs to is not passed because the inspector always shows the focused
+    // node, and the canvas focuses the player before asking.
+    void expandStemRack(int slot);
+
     // Raised when the plugin editor button in the inspector is pressed.
     std::function<void(NodeId)> onOpenPluginEditor;
     // Asks the application to put a plugin on the end of a stem's rack. The
@@ -89,6 +96,10 @@ public:
     // through the application because both touch the plugin host.
     std::function<void(NodeId stemPlayer, int slot, const std::string& name)> onSaveChain;
     std::function<void(NodeId stemPlayer, int slot, const std::string& name)> onLoadChain;
+    // The same for a colour node's two ends, which are the other half of a
+    // stem's treatment and just as much work to build by hand.
+    std::function<void(NodeId colourNode, const std::string& name)> onSaveColour;
+    std::function<void(NodeId colourNode, const std::string& name)> onLoadColour;
 
 private:
     void drawParameterList(Ui& ui, Rect area, Node& node);
@@ -123,6 +134,9 @@ private:
     // while typing does not silently retarget the save.
     int savingStem_ = -1;
     std::string chainNameBuffer_;
+
+    bool savingColour_ = false;
+    std::string colourNameBuffer_;
 };
 
 // ---------------------------------------------------------------------------

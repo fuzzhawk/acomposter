@@ -19,6 +19,7 @@
 
 #include "../core/Json.h"
 #include "ChainPreset.h"
+#include "PresetStore.h"
 #include "TagPalette.h"
 
 #include <cstdint>
@@ -124,6 +125,12 @@ public:
     ChainStore& chains() noexcept { return chains_; }
     const ChainStore& chains() const noexcept { return chains_; }
 
+    // Colour presets: the two ends of a colour node's travel, stored by
+    // parameter name so one preset works against whatever plugins a stem
+    // happens to have. Beside the chains for the same reason they are.
+    PresetStore& colours() noexcept { return colours_; }
+    const PresetStore& colours() const noexcept { return colours_; }
+
     // -- search ------------------------------------------------------------
     // Name, notes and file names, case insensitive. Tag filtering is by id.
     std::vector<const Entry*> search(const std::string& text, EntryKind kind) const;
@@ -139,6 +146,7 @@ private:
     std::vector<Entry> entries_;
     TagPalette palette_;
     ChainStore chains_;
+    PresetStore colours_;
 };
 
 } // namespace acm::library

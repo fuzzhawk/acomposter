@@ -55,4 +55,13 @@ std::string pathStem(std::string_view path);            // leaf without extensio
 std::string pathExtension(std::string_view path);       // lowercase, includes the dot
 std::string pathNormalise(std::string_view path);       // forward slashes to backslashes, collapse dupes
 
+// A name reduced to something safe to be a file name: letters, digits, dashes
+// and underscores, with everything else collapsed to a single dash.
+//
+// Anything named by a person - a preset, a saved chain - goes through this on
+// the way to disk, and the display name is kept inside the file rather than in
+// its name. `fallback` is used when nothing survives, which happens for a name
+// made entirely of punctuation.
+std::string safeFileName(std::string_view name, std::string_view fallback = "unnamed");
+
 } // namespace acm

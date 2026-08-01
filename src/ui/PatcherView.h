@@ -113,6 +113,16 @@ public:
     // Set when a node's editor button is clicked; the application acts on it.
     NodeId consumeEditorRequest();
 
+    // Set when a stem player's output port is right-clicked. The chain presets
+    // for that stem live in the inspector, so the gesture opens that rack there
+    // rather than growing a second copy of the same controls on the canvas.
+    struct RackRequest {
+        NodeId node = kInvalidNode;
+        int slot = -1;
+        bool valid() const noexcept { return node != kInvalidNode && slot >= 0; }
+    };
+    RackRequest consumeRackRequest();
+
     Vec2 screenToWorld(Vec2 screen, const Rect& bounds) const;
     Vec2 worldToScreen(Vec2 world, const Rect& bounds) const;
 
@@ -201,6 +211,7 @@ private:
     float resizeStartWidth_ = 0.0f;
 
     NodeId editorRequest_ = kInvalidNode;
+    RackRequest rackRequest_;
     NodeId renamingNode_ = kInvalidNode;
     std::string renameBuffer_;
 

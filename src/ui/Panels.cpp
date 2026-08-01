@@ -766,6 +766,53 @@ void InspectorView::drawColorSection(Ui& ui, Rect& area, Node& node) {
 
     area.removeFromTop(t.scaled(3.0f));
 
+    // -- presets -----------------------------------------------------------
+    // A colour setup is a lot of work to build - a rack, a dozen targets, and
+    // two ends captured by ear - and it is the same work for every bass in
+    // every song. Presets bind by *parameter name*, so one saved against one
+    // filter works against a different one with the same controls, and says
+    // what it could not find rather than binding to the wrong thing.
+    if (library_ && library_->colours().isOpen()) {
+        Rect presetRow = area.removeFromTop(t.scaled(20.0f));
+        const bool saving = savingColour_;
+        const Rect saveArea = presetRow.removeFromRight(t.scaled(46.0f));
+
+        if (saving) {
+            const bool committed = ui.textField(ui.id("inspector.color.name"), presetRow,
+                                                colourNameBuffer_);
+            if ((ui.button(ui.id("inspector.color.keep"), saveArea, "keep",
+                           Ui::ButtonStyle::Primary, false, !colourNameBuffer_.empty())
+                 || committed)
+                && !colourNameBuffer_.empty()) {
+                if (onSaveColour) onSaveColour(node.id(), colourNameBuffer_);
+                savingColour_ = false;
+                colourNameBuffer_.clear();
+            }
+        } else {
+            if (ui.button(ui.id("inspector.color.keep"), saveArea, "save",
+                          Ui::ButtonStyle::Normal, false, !color->targets().empty())) {
+                savingColour_ = true;
+                colourNameBuffer_ = node.name();
+            }
+            if (ui.isHot(ui.id("inspector.color.keep")) && color->targets().empty())
+                ui.setTooltip("Nothing bound to save");
+
+            presetRow.removeFromRight(t.scaled(4.0f));
+
+            const std::vector<std::string> names = library_->colours().names();
+            std::vector<std::string> items{ "load colour..." };
+            for (const std::string& name : names) items.push_back(name);
+
+            int chosen = 0;
+            if (ui.combo(ui.id("inspector.color.load"), presetRow, items, chosen) && chosen > 0) {
+                if (onLoadColour)
+                    onLoadColour(node.id(), items[static_cast<std::size_t>(chosen)]);
+            }
+        }
+
+        area.removeFromTop(t.scaled(3.0f));
+    }
+
     // Adopting a whole node is how a chain gets set up: pick the plugin, take
     // every parameter it has, then capture the two ends by ear and prune.
     Rect adoptRow = area.removeFromTop(t.scaled(20.0f));
@@ -932,6 +979,15 @@ void InspectorView::drawDropSection(Ui& ui, Rect& area, Node& node) {
                                                             : pathLeaf(drop->layerPath(i)));
         area.removeFromTop(t.scaled(2.0f));
     }
+}
+
+void InspectorView::expandStemRack(int slot) {
+    expandedStem_ = slot;
+    // Anything half-typed belonged to whichever rack was open before, so it is
+    // dropped rather than silently retargeted at the one being opened.
+    savingStem_ = -1;
+    chainNameBuffer_.clear();
+    copySourceStem_ = -1;
 }
 
 void InspectorView::render(Ui& ui, const Rect& bounds, NodeId nodeId) {

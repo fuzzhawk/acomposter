@@ -26,6 +26,8 @@ set(ACOMPOSTER_CORE_SOURCES
     library/AudioAnalysis.cpp
     library/FileIndex.cpp
     library/ChainPreset.cpp
+    library/ColourDefaults.cpp
+    library/PresetStore.cpp
     library/Classify.cpp
     library/Slicer.cpp
     library/Library.cpp
