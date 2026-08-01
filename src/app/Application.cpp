@@ -79,7 +79,8 @@ bool Application::initialise() {
     // -- views -------------------------------------------------------------
     patcher_.initialise(&engine_, &metasurface_, &plugins_);
     metasurfaceView_.initialise(&engine_, &metasurface_, &renderer_);
-    controlView_.initialise(&engine_, &surface_, &metasurfaceView_);
+    controlServer_.initialise(&engine_, &surface_);
+    controlView_.initialise(&engine_, &surface_, &metasurfaceView_, &controlServer_);
     controlView_.onModified = [this] { markModified(); };
     browser_.initialise();
 
@@ -488,6 +489,10 @@ void Application::serviceBackground() {
 
     // Publishes a finished folder scan. Cheap when there is not one.
     librarianView_.serviceFromMessageThread();
+
+    // Applies whatever a tablet moved, and pushes the surface back out. Both
+    // happen here so the graph has exactly one writer.
+    controlServer_.serviceFromMessageThread();
 
     // Files dropped on the window go to the canvas. The rectangle has to be the
     // one the patcher actually draws into, or the drop lands at the wrong world

@@ -21,6 +21,8 @@
 #include "../src/library/AudioAnalysis.h"
 #include "../src/library/FileIndex.h"
 #include "../src/library/Slicer.h"
+#include "../src/net/WebSocket.h"
+#include "../src/net/Sha1.h"
 #include "../src/library/Classify.h"
 #include "../src/library/ChainPreset.h"
 #include "../src/library/Library.h"
@@ -1693,6 +1695,81 @@ std::shared_ptr<SampleBuffer> makeNoise(double seconds, double decay, std::uint3
     return buffer;
 }
 
+void testWebSocketHandshakeAndFrames() {
+    TEST("the WebSocket handshake and framing match the standard");
+
+    // The example from RFC 6455 section 1.3. Getting this exact string back is
+    // the whole of the handshake being right; a browser refuses the connection
+    // with no useful message when it is wrong.
+    CHECK(net::websocket::acceptKey("dGhlIHNhbXBsZSBub25jZQ==")
+          == "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
+
+    // SHA-1 against the two vectors everyone checks it with.
+    const auto abc = net::sha1("abc");
+    CHECK(abc[0] == 0xA9 && abc[1] == 0x99 && abc[2] == 0x3E && abc[3] == 0x36);
+    CHECK(abc[19] == 0x9D);
+
+    const auto empty = net::sha1("");
+    CHECK(empty[0] == 0xDA && empty[1] == 0x39 && empty[2] == 0xA3);
+
+    // A message spanning more than one 64-byte block, where the padding and the
+    // length field have to land in the right place.
+    const auto longer = net::sha1(std::string(1000, 'a'));
+    CHECK(longer[0] == 0x29 && longer[1] == 0x1E);
+
+    // -- framing -----------------------------------------------------------
+    using namespace net::websocket;
+
+    // Server frames are never masked, and the length is encoded in the
+    // smallest form that fits.
+    const std::string small = encode(Opcode::Text, "hello");
+    CHECK(small.size() == 7);
+    CHECK(static_cast<std::uint8_t>(small[0]) == 0x81);
+    CHECK(static_cast<std::uint8_t>(small[1]) == 5);
+
+    const std::string medium = encode(Opcode::Text, std::string(200, 'x'));
+    CHECK(static_cast<std::uint8_t>(medium[1]) == 126);
+    CHECK(medium.size() == 204);
+
+    const std::string large = encode(Opcode::Binary, std::string(70000, 'y'));
+    CHECK(static_cast<std::uint8_t>(large[1]) == 127);
+    CHECK(large.size() == 70010);
+
+    // A masked client frame decodes to its plaintext.
+    std::string incoming;
+    incoming.push_back(static_cast<char>(0x81));
+    incoming.push_back(static_cast<char>(0x80 | 5));
+    const std::uint8_t mask[4] = { 0x37, 0xFA, 0x21, 0x3D };
+    for (const std::uint8_t byte : mask) incoming.push_back(static_cast<char>(byte));
+    const std::string plain = "Hello";
+    for (std::size_t i = 0; i < plain.size(); ++i)
+        incoming.push_back(static_cast<char>(plain[i] ^ mask[i % 4]));
+
+    Frame frame;
+    CHECK(decode(incoming, frame));
+    CHECK(frame.payload == "Hello");
+    CHECK(frame.opcode == Opcode::Text);
+    CHECK(frame.final);
+    // The frame's bytes are consumed, so a buffer holding two frames yields
+    // both rather than the first twice.
+    CHECK(incoming.empty());
+
+    // Half a frame is the normal case on a socket, not an error: the buffer is
+    // left exactly as it was so the next read can complete it.
+    std::string partial = small.substr(0, 4);
+    const std::string before = partial;
+    CHECK(!decode(partial, frame));
+    CHECK(partial == before);
+
+    // Two frames back to back come out one at a time.
+    std::string pair = small + encode(Opcode::Ping, "p");
+    CHECK(decode(pair, frame));
+    CHECK(frame.payload == "hello");
+    CHECK(decode(pair, frame));
+    CHECK(frame.opcode == Opcode::Ping);
+    CHECK(pair.empty());
+}
+
 void testClassifierNamesWhatItHears() {
     TEST("the classifier separates a kick, a hat and a bass note");
 
@@ -2561,6 +2638,7 @@ int main() {
     testNoteNaming();
     testAnalysisSeparatesSounds();
     testFilenameNumbersAndPitchClass();
+    testWebSocketHandshakeAndFrames();
     testClassifierNamesWhatItHears();
     testInstrumentTagsMatchByName();
     testProposedNamesKeepWhatTheNameKnew();

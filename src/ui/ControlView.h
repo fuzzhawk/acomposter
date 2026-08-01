@@ -14,6 +14,7 @@
 
 #include "../control/Surface.h"
 #include "../core/Engine.h"
+#include "../net/ControlServer.h"
 #include "MetasurfaceView.h"
 #include "Ui.h"
 
@@ -24,7 +25,8 @@ namespace acm::ui {
 
 class ControlView {
 public:
-    void initialise(Engine* engine, control::Surface* surface, MetasurfaceView* metasurfaceView);
+    void initialise(Engine* engine, control::Surface* surface, MetasurfaceView* metasurfaceView,
+                    net::ControlServer* server);
 
     void render(Ui& ui, const Rect& bounds);
 
@@ -46,6 +48,7 @@ private:
     Rect gridCell(const Rect& area, int column, int row, int width, int height) const;
 
     void drawToolbar(Ui& ui, Rect& area);
+    void drawServerRow(Ui& ui, Rect& area);
     void drawPageTabs(Ui& ui, Rect& area);
     void drawGrid(Ui& ui, const Rect& area) const;
     void drawControl(Ui& ui, const Rect& area, control::Control& control);
@@ -58,6 +61,10 @@ private:
     Engine* engine_ = nullptr;
     control::Surface* surface_ = nullptr;
     MetasurfaceView* metasurfaceView_ = nullptr;
+    // Serving the same surface to a tablet. Owned by the application, because
+    // it has to keep running while another tab is in front.
+    net::ControlServer* server_ = nullptr;
+    int serverPort_ = 8420;
 
     bool editing_ = false;
 

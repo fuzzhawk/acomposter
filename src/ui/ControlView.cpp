@@ -36,10 +36,11 @@ void defaultSize(control::ControlKind kind, int& width, int& height) {
 } // namespace
 
 void ControlView::initialise(Engine* engine, control::Surface* surface,
-                             MetasurfaceView* metasurfaceView) {
+                             MetasurfaceView* metasurfaceView, net::ControlServer* server) {
     engine_ = engine;
     surface_ = surface;
     metasurfaceView_ = metasurfaceView;
+    server_ = server;
 }
 
 // ---------------------------------------------------------------------------
@@ -184,6 +185,64 @@ void ControlView::drawToolbar(Ui& ui, Rect& area) {
         if (onModified) onModified();
     }
     ui.label(right.removeFromRight(t.scaled(34.0f)), "grid", t.textFaint, t.fontSmall);
+}
+
+void ControlView::drawServerRow(Ui& ui, Rect& area) {
+    const Theme& t = theme();
+    if (!server_) return;
+
+    Rect bar = area.removeFromTop(t.scaled(26.0f));
+    ui.draw().addRectFilled(bar, t.panelHeader);
+
+    Rect row = bar.deflated(t.scaled(3.0f));
+
+    const bool on = server_->running();
+    if (ui.button(ui.id("control.server"), row.removeFromLeft(t.scaled(74.0f)),
+                  on ? "serving" : "serve",
+                  on ? Ui::ButtonStyle::Primary : Ui::ButtonStyle::Normal, on)) {
+        if (on) {
+            server_->stop();
+        } else {
+            std::string error;
+            if (!server_->start(static_cast<std::uint16_t>(serverPort_), &error))
+                ui.notify(error, t.danger, 6.0f);
+        }
+    }
+    if (ui.isHot(ui.id("control.server"))) {
+        ui.setTooltip("Serve this surface to a tablet on the same network. "
+                      "No password and no encryption - a private network only.");
+    }
+
+    row.removeFromLeft(t.scaled(8.0f));
+
+    if (!on) {
+        ui.label(row.removeFromLeft(t.scaled(30.0f)), "port", t.textFaint, t.fontSmall);
+        if (ui.intField(ui.id("control.port"), row.removeFromLeft(t.scaled(60.0f)),
+                        serverPort_, 1024, 65535)) {
+            // Nothing to do: the port is read when the server starts.
+        }
+        row.removeFromLeft(t.scaled(10.0f));
+        ui.labelDim(row, "open the address it gives you in a tablet browser");
+        return;
+    }
+
+    char status[64];
+    std::snprintf(status, sizeof(status), "%d connected", server_->clientCount());
+    ui.labelDim(row.removeFromRight(t.scaled(110.0f)), status, DrawList::Align::Right);
+
+    // The addresses, so there is something to type rather than something to
+    // work out. Loopback is left out by the server for the same reason.
+    const std::vector<std::string> addresses = server_->addresses();
+    std::string joined;
+    for (const std::string& address : addresses) {
+        if (!joined.empty()) joined += "    ";
+        joined += address;
+    }
+
+    ui.draw().addTextClipped(ui.font(t.fontSmall), row,
+                             addresses.empty() ? t.warning : t.accent,
+                             addresses.empty() ? "no network address - is this machine on a network?"
+                                               : joined);
 }
 
 void ControlView::drawPageTabs(Ui& ui, Rect& area) {
@@ -584,6 +643,7 @@ void ControlView::render(Ui& ui, const Rect& bounds) {
 
     Rect area = bounds;
     drawToolbar(ui, area);
+    drawServerRow(ui, area);
     drawPageTabs(ui, area);
 
     Rect inspector;

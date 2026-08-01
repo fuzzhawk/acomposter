@@ -17,6 +17,7 @@
 #include "../platform/AudioDevice.h"
 #include "../platform/Window.h"
 #include "../control/Surface.h"
+#include "../net/ControlServer.h"
 #include "../ui/ControlView.h"
 #include "../ui/LibrarianView.h"
 #include "../ui/LibraryView.h"
@@ -95,6 +96,9 @@ private:
     // The played layout, as opposed to the patch that makes the sound. Saved
     // with the document, because a surface is built for one set.
     control::Surface surface_;
+    // Serves the surface to a tablet. Outlives the Control tab, so a
+    // performer on another tab is still being followed.
+    net::ControlServer controlServer_;
     vst2::PluginManager plugins_;
 
     platform::Window window_;

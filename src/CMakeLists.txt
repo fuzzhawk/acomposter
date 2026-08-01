@@ -20,6 +20,9 @@ set(ACOMPOSTER_CORE_SOURCES
 
     control/Surface.cpp
     dsp/Fft.cpp
+    net/ControlServer.cpp
+    net/HttpServer.cpp
+    net/WebSocket.cpp
     library/AudioAnalysis.cpp
     library/FileIndex.cpp
     library/ChainPreset.cpp
@@ -46,6 +49,8 @@ set(ACOMPOSTER_CORE_SOURCES
 add_library(acomposter_core STATIC ${ACOMPOSTER_CORE_SOURCES})
 target_include_directories(acomposter_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(acomposter_core PUBLIC acomposter_flags)
+# Winsock, for the control surface web server.
+target_link_libraries(acomposter_core PUBLIC ws2_32)
 
 # ---------------------------------------------------------------------------
 # acomposter_vst2
