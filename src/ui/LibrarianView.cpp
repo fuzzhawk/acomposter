@@ -5,6 +5,7 @@
 #include <functional>
 #include "../core/FileIo.h"
 #include "../dsp/Fft.h"
+#include "../platform/DragOut.h"
 
 #include <algorithm>
 #include <cmath>
@@ -229,6 +230,9 @@ void LibrarianView::drawList(Ui& ui, const Rect& area) {
         return;
     }
 
+    // One drag per press: rearmed only once the button is genuinely up.
+    if (!ui.input().mouseDown[static_cast<int>(MouseButton::Left)]) draggingOut_ = false;
+
     const std::vector<const library::IndexedFile*> rows =
         index_.query(filter_, sortKey_, sortDescending_,
                      sortKey_ == library::SortKey::Similarity ? similarTo_ : std::string());
@@ -253,6 +257,21 @@ void LibrarianView::drawList(Ui& ui, const Rect& area) {
         bool hovered = false, held = false;
         if (ui.buttonBehaviour(ui.id("librarian.row." + file->path), row, hovered, held))
             select(file->path);
+
+        // Held and moved: hand the file to Windows, so it can be dropped into a
+        // DAW, an editor or a folder. The threshold is what separates the
+        // gesture from a click that wobbled, and it is in design units because
+        // six device pixels is a different gesture on every display.
+        if (held && !draggingOut_
+            && (ui.input().mousePosition - ui.dragStart()).length() > t.scaled(6.0f)) {
+            draggingOut_ = true;
+            // The call blocks for the length of the drag, and the button-up
+            // that ends it goes to OLE rather than to us - so the row is
+            // released here rather than waiting for an event that will not
+            // arrive.
+            platform::dragOutFiles({ file->path });
+            ui.clearActive();
+        }
 
         if (isSelected) list.addRectFilled(row, t.selection.withAlpha(0.20f), 2.0f);
         else if (hovered) list.addRectFilled(row, t.widgetHover, 2.0f);

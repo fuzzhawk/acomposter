@@ -165,6 +165,22 @@ bool Window::pumpEvents(ui::InputState& input) {
     // Fold everything the window procedure collected into the caller's state.
     ui::InputState& pending = impl_->pending;
 
+    // A modal loop belonging to somebody else - a drag out to another
+    // application, a plugin's own editor, a shell dialog - swallows the
+    // button-up that would have cleared a held button, and the state would then
+    // stay down until the next click, with the UI convinced something was being
+    // dragged the whole time. The physical state can only clear a button here,
+    // never set one, so a press still has to arrive as a real message to count.
+    {
+        static constexpr int kMouseKeys[3] = { VK_LBUTTON, VK_RBUTTON, VK_MBUTTON };
+        for (int i = 0; i < 3; ++i) {
+            if (!pending.mouseDown[i]) continue;
+            if ((::GetAsyncKeyState(kMouseKeys[i]) & 0x8000) != 0) continue;
+            pending.mouseDown[i] = false;
+            pending.mouseReleased[i] = true;
+        }
+    }
+
     input.mousePosition = pending.mousePosition;
     input.wheel = pending.wheel;
     input.wheelHorizontal = pending.wheelHorizontal;

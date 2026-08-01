@@ -112,6 +112,7 @@ set(ACOMPOSTER_APP_SOURCES
 
     platform/AsioDevice.cpp
     platform/AudioDevice.cpp
+    platform/DragOut.cpp
     platform/FileDialog.cpp
     platform/WasapiDevice.cpp
     platform/Window.cpp

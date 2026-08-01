@@ -8,6 +8,7 @@
 #include "../nodes/BuildNode.h"
 #include "../nodes/ColorNode.h"
 #include "../nodes/StemPlayerNode.h"
+#include "../platform/DragOut.h"
 #include "../platform/FileDialog.h"
 #include "../vst2/BridgedVst2Plugin.h"
 #include "../vst2/NativeVst2Plugin.h"
@@ -512,6 +513,27 @@ void Application::frame(float deltaSeconds) {
             if (address.valid() && controlView_.completeLearn(address))
                 ui_.notify("bound", ui::theme().accent, 1.5f);
         }
+    }
+
+    // A file dragged out of the window belongs to whatever is under the pointer
+    // out there, not to us. The internal drag stays exactly as it was for
+    // anything dropped inside; leaving the window is what turns it into a
+    // Windows drag, which is also the only gesture that could mean this - the
+    // canvas is inside, so a drag that ends inside is still a drag to the
+    // canvas.
+    //
+    // The pointer is captured for the length of a press, so it keeps being
+    // reported after it leaves - which is the only reason this can be noticed
+    // at all.
+    const Vec2 pointer = ui_.input().mousePosition;
+    const bool outside = pointer.x < 0.0f || pointer.y < 0.0f
+                      || pointer.x > static_cast<float>(window_.width())
+                      || pointer.y > static_cast<float>(window_.height());
+    if (ui_.dragging() && ui_.dragType() == "file" && outside) {
+        const std::string path = ui_.dragPayload();
+        ui_.cancelDrag();
+        ui_.clearActive();
+        platform::dragOutFiles({ path });
     }
 
     ui_.endFrame();

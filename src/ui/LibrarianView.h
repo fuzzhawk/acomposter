@@ -78,6 +78,10 @@ private:
     float spinAngle_ = 0.62f;
     float tiltAngle_ = 0.42f;
 
+    // True for the duration of a drag out of the window, so one press starts one
+    // drag rather than a new one on every frame the pointer is still moving.
+    bool draggingOut_ = false;
+
     std::string filterBuffer_;
     // -128 is "any key"; otherwise a semitone index from A4.
     int keyFilter_ = -128;

@@ -34,6 +34,7 @@
 #include "../src/nodes/NodeFactory.h"
 #include "../src/nodes/StemPlayerNode.h"
 #include "../src/patch/Patch.h"
+#include "../src/platform/DragOut.h"
 #include "../src/vst2/PeArchitecture.h"
 
 #include <algorithm>
@@ -888,6 +889,45 @@ void testBase64() {
 
     // Whitespace inside the encoded form is tolerated.
     CHECK(base64Decode("Zm9v\n YmFy") == base64Decode("Zm9vYmFy"));
+}
+
+void testDropFileList() {
+    TEST("CF_HDROP path list");
+
+    // One path: terminated, then terminated again to end the list.
+    const std::wstring one = platform::dropFileList({ "C:\\music\\kick.wav" });
+    CHECK(one.size() == 17 + 2);
+    CHECK(one.compare(0, 17, L"C:\\music\\kick.wav") == 0);
+    CHECK(one[17] == L'\0');
+    CHECK(one[18] == L'\0');
+
+    // Several: every path readable, and the walk stops at the double null
+    // rather than running off the end.
+    const std::wstring many =
+        platform::dropFileList({ "C:\\a.wav", "C:\\b.wav", "C:\\c.wav" });
+    std::vector<std::wstring> walked;
+    for (std::size_t at = 0; at < many.size() && many[at] != L'\0';) {
+        walked.emplace_back(many.c_str() + at);
+        at += walked.back().size() + 1;
+    }
+    CHECK(walked.size() == 3);
+    CHECK(walked[0] == L"C:\\a.wav");
+    CHECK(walked[2] == L"C:\\c.wav");
+
+    // An empty path would terminate the list early and hide everything after
+    // it, so it is dropped rather than written.
+    const std::wstring skipped = platform::dropFileList({ "", "C:\\d.wav" });
+    CHECK(skipped.compare(0, 8, L"C:\\d.wav") == 0);
+
+    // Non-ASCII survives the conversion to UTF-16.
+    const std::wstring wide = platform::dropFileList({ "C:\\caf\xc3\xa9.wav" });
+    CHECK(wide.compare(0, 11, L"C:\\caf\u00e9.wav") == 0);
+    // One unit, not two: the accented character is a single UTF-16 code unit,
+    // so the block is shorter than the UTF-8 it came from.
+    CHECK(wide.size() == 11 + 2);
+
+    // Nothing to drag is still a well-formed, empty list.
+    CHECK(platform::dropFileList({}) == std::wstring(1, L'\0'));
 }
 
 
@@ -2767,6 +2807,7 @@ int main() {
     testPatchRejectsRubbish();
     testPeArchitecture();
     testBase64();
+    testDropFileList();
 
     std::printf("----------------\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
