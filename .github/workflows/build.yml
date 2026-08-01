@@ -157,6 +157,7 @@ jobs:
           cmake -B build/win64 -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake \
             -DCMAKE_BUILD_TYPE=Release \
+            -DACOMPOSTER_BUILD_TESTS=ON \
             -DACOMPOSTER_WERROR=ON
           cmake --build build/win64
 
@@ -176,10 +177,6 @@ jobs:
       # was added, was not, and the step spent several commits failing to
       # compile rather than failing a test - which is the least useful way for
       # a test step to be red. Running what was just built cannot go stale.
-      # The full package rather than a stripped one. --no-install-recommends
-      # left a Wine that created a prefix and then could not load a statically
-      # linked executable importing nothing but kernel32, user32, msvcrt and
-      # ole32, which is as close to the minimum as a Windows binary gets.
       - name: Install Wine
         run: sudo apt-get install -y wine64
 
@@ -195,8 +192,6 @@ jobs:
           # merged. The last fallback is where the loader lives when the
           # package ships no wrapper in /usr/bin at all.
           WINE=$(command -v wine64 || command -v wine || echo /usr/lib/wine/wine64)
-          echo "using $WINE"
-          ls -l build/win64/bin
 
           # wineboot is a Windows program, not a shell command, so it goes
           # through the loader like anything else. Running it first creates the
