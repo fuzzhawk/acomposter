@@ -5,6 +5,7 @@
 #include "../core/Json.h"
 #include "../nodes/NodeFactory.h"
 #include "../nodes/SamplePlayerNode.h"
+#include "../nodes/BuildNode.h"
 #include "../nodes/StemPlayerNode.h"
 #include "../platform/FileDialog.h"
 #include "../vst2/BridgedVst2Plugin.h"
@@ -130,6 +131,27 @@ bool Application::initialise() {
         } else {
             ui_.notify("nothing to copy from that stem", ui::theme().danger, 3.0f);
         }
+    };
+    inspector_.onSendSnippet = [this](NodeId playerId, NodeId buildId) {
+        auto* stems = dynamic_cast<StemPlayerNode*>(engine_.graph().node(playerId));
+        auto* build = dynamic_cast<BuildNode*>(engine_.graph().node(buildId));
+        if (!stems || !build) return;
+
+        const int beatsPerBar = engine_.transport().snapshot().timeSigNumerator;
+        auto snippet = stems->extractSnippet(beatsPerBar);
+        if (!snippet) {
+            ui_.notify("that selection is too short to use", ui::theme().danger, 4.0f);
+            return;
+        }
+
+        char label[96];
+        std::snprintf(label, sizeof(label), "%s %.2fs",
+                      stems->stemName(stems->snippet().slot).c_str(),
+                      snippet->durationSeconds());
+
+        build->setSnippet(std::move(snippet), label);
+        markModified();
+        ui_.notify("snippet sent to " + build->name(), ui::theme().accent, 2.5f);
     };
     inspector_.onTidyChains = [this](NodeId player) {
         patcher_.tidyStemChains(player);
@@ -362,15 +384,19 @@ void Application::serviceBackground() {
         togglePluginEditor(request);
 }
 
+float Application::browserWidthPx() const { return ui::theme().scaled(browserWidth_); }
+float Application::inspectorWidthPx() const { return ui::theme().scaled(inspectorWidth_); }
+float Application::timelineHeightPx() const { return ui::theme().scaled(timelineHeight_); }
+
 gfx::Rect Application::canvasBounds() const {
     Rect area{ 0.0f, 0.0f, static_cast<float>(window_.width()),
                static_cast<float>(window_.height()) };
 
     area.removeFromTop(ui::TransportBar::height());
     area.removeFromBottom(ui::StatusBar::height());
-    if (showTimeline_) area.removeFromBottom(timelineHeight_);
-    if (showBrowser_) area.removeFromLeft(browserWidth_);
-    if (showInspector_) area.removeFromRight(inspectorWidth_);
+    if (showTimeline_) area.removeFromBottom(timelineHeightPx());
+    if (showBrowser_) area.removeFromLeft(browserWidthPx());
+    if (showInspector_) area.removeFromRight(inspectorWidthPx());
 
     return area;
 }
@@ -400,12 +426,12 @@ void Application::layout(float deltaSeconds) {
             // Taken off the bottom before the side panels, so the timeline runs
             // the full width the way an arrangement view has to.
             if (showTimeline_) {
-                const Rect timelineArea = area.removeFromBottom(timelineHeight_);
+                const Rect timelineArea = area.removeFromBottom(timelineHeightPx());
                 drawTimelinePlaceholder(timelineArea);
             }
 
             if (showBrowser_) {
-                const Rect browserArea = area.removeFromLeft(browserWidth_);
+                const Rect browserArea = area.removeFromLeft(browserWidthPx());
                 browser_.render(ui_, browserArea);
 
                 // Draggable splitter between the browser and the canvas.
@@ -414,11 +440,12 @@ void Application::layout(float deltaSeconds) {
                 ui_.buttonBehaviour(ui_.id("split.browser"), splitter, hovered, held);
                 if (hovered || held) ui_.setCursor(ui::Cursor::ResizeHorizontal);
                 if (ui_.isActive(ui_.id("split.browser")))
-                    browserWidth_ = clampValue(browserWidth_ + input_.mouseDelta.x, 160.0f, 480.0f);
+                    browserWidth_ = clampValue(
+                        browserWidth_ + input_.mouseDelta.x / t.scale, 160.0f, 480.0f);
             }
 
             if (showInspector_) {
-                const Rect inspectorArea = area.removeFromRight(inspectorWidth_);
+                const Rect inspectorArea = area.removeFromRight(inspectorWidthPx());
                 inspector_.render(ui_, inspectorArea, patcher_.focusedNode());
 
                 const Rect splitter{ inspectorArea.left() - 2.0f, inspectorArea.top(),
@@ -427,7 +454,8 @@ void Application::layout(float deltaSeconds) {
                 ui_.buttonBehaviour(ui_.id("split.inspector"), splitter, hovered, held);
                 if (hovered || held) ui_.setCursor(ui::Cursor::ResizeHorizontal);
                 if (ui_.isActive(ui_.id("split.inspector")))
-                    inspectorWidth_ = clampValue(inspectorWidth_ - input_.mouseDelta.x, 200.0f, 560.0f);
+                    inspectorWidth_ = clampValue(
+                        inspectorWidth_ - input_.mouseDelta.x / t.scale, 200.0f, 560.0f);
             }
 
             patcher_.render(ui_, area);

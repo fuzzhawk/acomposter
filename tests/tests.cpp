@@ -914,7 +914,7 @@ void clearTestLibrary(const std::string& root) {
 void testLibraryRoundTrip() {
     TEST("library entries survive being written and re-read");
 
-    const std::string root = "acomposter-test-library";
+    const std::string root = "acomposter-test-tmp/library";
     clearTestLibrary(root);
 
     {
@@ -965,7 +965,7 @@ void testLibraryRoundTrip() {
 void testLibraryMultipleMembership() {
     TEST("a file can belong to several songs at once");
 
-    const std::string root = "acomposter-test-library-2";
+    const std::string root = "acomposter-test-tmp/library-2";
     clearTestLibrary(root);
 
     library::Library lib;
@@ -990,7 +990,7 @@ void testLibraryMultipleMembership() {
 void testLibraryTagging() {
     TEST("tagging a file makes an asset entry and survives a rename");
 
-    const std::string root = "acomposter-test-library-3";
+    const std::string root = "acomposter-test-tmp/library-3";
     clearTestLibrary(root);
 
     library::Library lib;
@@ -1018,7 +1018,7 @@ void testLibraryTagging() {
 void testLibrarySurvivesBadEntry() {
     TEST("one unreadable entry costs one entry, not the library");
 
-    const std::string root = "acomposter-test-library-4";
+    const std::string root = "acomposter-test-tmp/library-4";
     clearTestLibrary(root);
 
     {
@@ -1037,6 +1037,68 @@ void testLibrarySurvivesBadEntry() {
     CHECK(lib.entriesOfKind(library::EntryKind::Song).size() == 1);
 }
 
+
+
+void testStemSnippetExtraction() {
+    TEST("a snippet is cut from the stem and snapped to the grid");
+
+    const double rate = 48000.0;
+    auto buffer = std::make_shared<SampleBuffer>(1, static_cast<std::int64_t>(rate * 8.0), rate);
+    for (std::int64_t i = 0; i < buffer->frames(); ++i)
+        buffer->channelForWrite(0)[i] = static_cast<float>(i) / static_cast<float>(buffer->frames());
+
+    StemPlayerNode stems;
+    stems.setStemFromBuffer(0, buffer, "source");
+    stems.setStemBpm(120.0);   // a sixteenth is 0.125 s
+
+    StemPlayerNode::Snippet snip;
+    snip.slot = 0;
+    snip.startSeconds = 1.0;
+    snip.lengthSeconds = 0.47;      // not on the grid
+    snip.tempoMatched = true;
+    stems.setSnippet(snip);
+
+    const auto matched = stems.extractSnippet(4);
+    CHECK(matched != nullptr);
+    // 0.47 s rounds to four sixteenths, which is half a second at 120.
+    CHECK_CLOSE(matched->durationSeconds(), 0.5, 1e-6);
+
+    // The audio really is the requested range, not the start of the file.
+    CHECK_CLOSE(matched->channel(0)[0], 1.0 / 8.0, 1e-4);
+
+    // Free-form takes the drag exactly.
+    snip.tempoMatched = false;
+    stems.setSnippet(snip);
+    const auto free = stems.extractSnippet(4);
+    CHECK(free != nullptr);
+    CHECK_CLOSE(free->durationSeconds(), 0.47, 1e-3);
+
+    // A selection too short to be a grain source is refused rather than
+    // producing a buffer nothing can read.
+    snip.lengthSeconds = 0.0001;
+    snip.tempoMatched = false;
+    stems.setSnippet(snip);
+    CHECK(stems.extractSnippet(4) == nullptr);
+}
+
+void testBuildTrimStaysValid() {
+    TEST("trim handles cannot cross or collapse");
+
+    BuildNode build;
+
+    build.setTrim(0.2f, 0.8f);
+    CHECK_CLOSE(build.trimStart(), 0.2, 1e-6);
+    CHECK_CLOSE(build.trimEnd(), 0.8, 1e-6);
+
+    // Dragging the end past the start would give the grain scheduler a window
+    // of zero or negative length to pick positions from.
+    build.setTrim(0.6f, 0.1f);
+    CHECK(build.trimEnd() > build.trimStart());
+
+    build.setTrim(1.0f, 1.0f);
+    CHECK(build.trimEnd() > build.trimStart());
+    CHECK(build.trimEnd() <= 1.0f);
+}
 
 void testStemTagRouting() {
     TEST("a stem's tag decides its output until it is pinned");
@@ -1098,7 +1160,7 @@ void testChainPresetRoundTrip() {
     TEST("chain presets survive being written and re-read");
 
     library::ChainStore store;
-    store.open("acomposter-test-chains");
+    store.open("acomposter-test-tmp/chains");
 
     library::ChainPreset preset;
     preset.name = "tight bass";
@@ -1544,6 +1606,8 @@ int main() {
     testLibraryMultipleMembership();
     testLibraryTagging();
     testLibrarySurvivesBadEntry();
+    testStemSnippetExtraction();
+    testBuildTrimStaysValid();
     testStemTagRouting();
     testStemRoutingPersists();
     testChainPresetRoundTrip();

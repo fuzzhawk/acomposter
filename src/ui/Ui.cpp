@@ -696,8 +696,8 @@ bool Ui::parameterKnob(const Rect& rect, Parameter& parameter, const Colour& fil
     Rect valueArea;
 
     if (showLabel && rect.height > 46.0f) {
-        labelArea = knobArea.removeFromTop(13.0f);
-        valueArea = knobArea.removeFromBottom(13.0f);
+        labelArea = knobArea.removeFromTop(t.scaled(13.0f));
+        valueArea = knobArea.removeFromBottom(t.scaled(13.0f));
     }
 
     float normalised = parameter.normalised();
@@ -728,10 +728,21 @@ bool Ui::parameterSlider(const Rect& rect, Parameter& parameter, const Colour& f
 
     Rect area = rect;
     Rect labelArea;
-    if (showLabel && rect.width > 110.0f)
+    if (showLabel && rect.width > t.scaled(110.0f))
         labelArea = area.removeFromLeft(rect.width * 0.38f);
 
-    Rect valueArea = area.removeFromRight(std::min(64.0f, area.width * 0.4f));
+    // Measured rather than guessed, and the reservation is on the track rather
+    // than on the readout. A fixed fraction has to be chosen for the longest
+    // value the slider might ever show, which wastes the track on every other
+    // one - and choosing it for the common case clips "-60.0 dB" and "60.0 ms"
+    // wherever a node body puts a slider in half a row. So the value takes what
+    // it measures, and the track keeps only the width below which it stops
+    // being draggable.
+    const std::string valueText = parameter.toText();
+    const float valueWidth = font(t.fontMono).textWidth(valueText) + t.smallPadding * 2.0f;
+    const float trackFloor = t.scaled(40.0f);
+    Rect valueArea = area.removeFromRight(
+        std::min(valueWidth, std::max(0.0f, area.width - trackFloor)));
     area.removeFromRight(t.smallPadding);
 
     float normalised = parameter.normalised();
@@ -743,7 +754,7 @@ bool Ui::parameterSlider(const Rect& rect, Parameter& parameter, const Colour& f
 
     drawList_.addTextClipped(font(t.fontMono), valueArea,
                              isHot(control) || isActive(control) ? t.text : t.textDim,
-                             parameter.toText(), DrawList::Align::Right);
+                             valueText, DrawList::Align::Right);
 
     if (isHot(control) && !parameter.description().empty())
         setTooltip(parameter.name() + " - " + parameter.description());
@@ -1192,7 +1203,8 @@ int Ui::popupMenu(UiId control, const Rect& rect, const std::vector<std::string>
     if (maximumOffset > 0.0f && scroll != nullptr) {
         const Rect track{ visible.right() - t.scrollBarWidth + 2.0f, visible.top(),
                           t.scrollBarWidth - 2.0f, visible.height };
-        const float thumbHeight = std::max(24.0f, track.height * (visible.height / contentHeight));
+        const float thumbHeight = std::max(t.scaled(24.0f),
+                                       track.height * (visible.height / contentHeight));
         const float progress = scroll->offset / maximumOffset;
         overlayList_.addRectFilled(track, t.widgetTrack, 2.0f);
         overlayList_.addRectFilled(Rect{ track.left(), track.top()
@@ -1217,7 +1229,7 @@ bool Ui::combo(UiId control, const Rect& rect, const std::vector<std::string>& i
                  t.borderWidth, t.cornerRadius);
 
     Rect textRect = rect.deflated(t.smallPadding);
-    const Rect arrowRect = textRect.removeFromRight(12.0f);
+    const Rect arrowRect = textRect.removeFromRight(t.scaled(12.0f));
 
     const std::string_view current =
         (selectedIndex >= 0 && selectedIndex < static_cast<int>(items.size()))
@@ -1359,7 +1371,8 @@ void Ui::endScroll() {
     const Rect view = state->viewRect;
     const Rect track{ view.right() - t.scrollBarWidth, view.top(), t.scrollBarWidth, view.height };
 
-    const float thumbHeight = std::max(28.0f, view.height * (view.height / state->contentHeight));
+    const float thumbHeight = std::max(t.scaled(28.0f),
+                                       view.height * (view.height / state->contentHeight));
     const float travel = track.height - thumbHeight;
     const float progress = maximum > 0.0f ? state->offset / maximum : 0.0f;
     const Rect thumb{ track.left() + 2.0f, track.top() + travel * progress,

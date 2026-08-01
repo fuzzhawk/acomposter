@@ -147,6 +147,9 @@ public:
     // True when some widget has captured the pointer, so a background view
     // should not also start a drag.
     bool pointerCaptured() const noexcept { return active_ != kNoId; }
+    // Where the pointer was when the active control captured it, which is what
+    // a range drag needs to know its anchor.
+    Vec2 dragStart() const noexcept { return dragStartPosition_; }
     bool keyboardCaptured() const noexcept { return editing_ != kNoId; }
 
     void setCursor(Cursor cursor) noexcept { cursor_ = cursor; }

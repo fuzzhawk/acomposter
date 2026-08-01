@@ -26,6 +26,7 @@
 #include "../core/Node.h"
 #include "../dsp/Dsp.h"
 
+#include <array>
 #include <atomic>
 #include <memory>
 #include <string>
@@ -53,6 +54,21 @@ public:
     NodeId colorNode() const noexcept { return colorNode_; }
 
     void setOwningGraph(Graph* graph) override { graph_ = graph; }
+
+    // -- granular ----------------------------------------------------------
+    // A snippet handed over from a stem player's spectral view. The buffer is
+    // copied rather than referenced, so the build node owns it outright and the
+    // audio thread never reaches back into another node to read it.
+    void setSnippet(std::shared_ptr<SampleBuffer> snippet, std::string label);
+    std::shared_ptr<SampleBuffer> snippet() const { return snippet_.shared(); }
+    const std::string& snippetLabel() const noexcept { return snippetLabel_; }
+    void clearSnippet();
+
+    // Trim, as fractions of the snippet. The selection is made roughly against
+    // a small strip on the stem; this is where it is made exact.
+    float trimStart() const noexcept { return trimStart_; }
+    float trimEnd() const noexcept { return trimEnd_; }
+    void setTrim(float start, float end) noexcept;
 
     // -- performance -------------------------------------------------------
     // The momentary switch. Held true for as long as the build should run.
@@ -96,6 +112,35 @@ private:
 
     AtomicResource<SampleBuffer> riser_;
     std::string riserPath_;
+
+    AtomicResource<SampleBuffer> snippet_;
+    std::string snippetLabel_;
+    float trimStart_ = 0.0f;
+    float trimEnd_ = 1.0f;
+    std::atomic<float> trimStartAtomic_{ 0.0f };
+    std::atomic<float> trimEndAtomic_{ 1.0f };
+
+    ParamIndex pGrainSize_ = -1, pGrainDensity_ = -1, pGrainPitch_ = -1;
+    ParamIndex pGrainSpread_ = -1, pGrainGain_ = -1, pGrainRamp_ = -1;
+
+    // A grain cloud: a small fixed pool of voices, started on a schedule and
+    // left to run out. Fixed because the render call must not allocate, and
+    // small because a build is a texture rather than a synthesiser.
+    struct Grain {
+        bool active = false;
+        double position = 0.0;   // frames into the snippet
+        double increment = 1.0;
+        int remaining = 0;
+        int length = 1;
+        float pan = 0.5f;
+    };
+    static constexpr int kMaxGrains = 48;
+    std::array<Grain, kMaxGrains> grains_{};
+    double grainClock_ = 0.0;
+    std::uint32_t grainRandom_ = 0x9E3779B9u;
+
+    void renderGrains(AudioBus& out, int frames, float shaped, double sampleRate) noexcept;
+    float nextRandom() noexcept;
 
     Graph* graph_ = nullptr;
     NodeId stemPlayer_ = kInvalidNode;

@@ -179,6 +179,51 @@ float StemPlayerNode::meterLevel(int slot, int channel) const noexcept {
 
 
 // ---------------------------------------------------------------------------
+// Snippet
+// ---------------------------------------------------------------------------
+
+void StemPlayerNode::setSnippet(const Snippet& snippet) {
+    snippet_ = snippet;
+    if (snippet_.slot < 0 || snippet_.slot >= kMaxStems) snippet_ = Snippet{};
+    if (snippet_.lengthSeconds < 0.0) snippet_.lengthSeconds = 0.0;
+}
+
+std::shared_ptr<SampleBuffer> StemPlayerNode::extractSnippet(int beatsPerBar) const {
+    if (!snippet_.valid()) return nullptr;
+
+    const auto source = stems_[static_cast<std::size_t>(snippet_.slot)].buffer.shared();
+    if (!source || source->empty()) return nullptr;
+
+    const double bpm = stemBpm_ > 0.0 ? stemBpm_ : 120.0;
+    double lengthSeconds = snippet_.lengthSeconds;
+
+    if (snippet_.tempoMatched) {
+        // Snapped to the nearest sixteenth, with a floor of one, so a short drag
+        // becomes a usable loop rather than a fragment that will never line up.
+        const double secondsPerSixteenth = 60.0 / bpm / 4.0;
+        const double sixteenths = std::max(1.0, std::round(lengthSeconds / secondsPerSixteenth));
+        lengthSeconds = sixteenths * secondsPerSixteenth;
+    }
+
+    const double rate = source->sampleRate();
+    const std::int64_t start = static_cast<std::int64_t>(snippet_.startSeconds * rate);
+    std::int64_t frames = static_cast<std::int64_t>(lengthSeconds * rate);
+
+    if (start < 0 || start >= source->frames()) return nullptr;
+    frames = std::min(frames, source->frames() - start);
+    if (frames < 16) return nullptr;
+
+    auto out = std::make_shared<SampleBuffer>(source->channels(), frames, rate);
+    for (int c = 0; c < source->channels(); ++c) {
+        const float* from = source->channel(c) + start;
+        float* to = out->channelForWrite(c);
+        std::copy(from, from + frames, to);
+    }
+
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // Routing
 // ---------------------------------------------------------------------------
 
@@ -754,6 +799,13 @@ void StemPlayerNode::saveExtraState(JsonValue& out) const {
     }
     out.set("sections", sections);
     out.set("matrixOpen", matrixOpen);
+
+    JsonValue snippet = JsonValue::object();
+    snippet.set("slot", snippet_.slot);
+    snippet.set("start", snippet_.startSeconds);
+    snippet.set("length", snippet_.lengthSeconds);
+    snippet.set("tempoMatched", snippet_.tempoMatched);
+    out.set("snippet", snippet);
     out.set("stemBpm", stemBpm_);
     out.set("tempoSource", tempoSource_);
 }
@@ -780,6 +832,15 @@ void StemPlayerNode::loadExtraState(const JsonValue& in) {
     }
 
     matrixOpen = in.getBool("matrixOpen", false);
+
+    if (const JsonValue* snippet = in.find("snippet"); snippet && snippet->isObject()) {
+        Snippet loaded;
+        loaded.slot = snippet->getInt("slot", -1);
+        loaded.startSeconds = snippet->getDouble("start", 0.0);
+        loaded.lengthSeconds = snippet->getDouble("length", 0.0);
+        loaded.tempoMatched = snippet->getBool("tempoMatched", true);
+        setSnippet(loaded);
+    }
     stemBpm_ = in.getDouble("stemBpm", 0.0);
     tempoSource_ = in.getString("tempoSource", "project");
 

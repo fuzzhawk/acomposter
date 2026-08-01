@@ -48,17 +48,23 @@ void registerThemeFonts(gfx::FontAtlas& atlas, float uiScale) {
 
     // Metrics scale with the fonts, so the whole interface tracks display DPI
     // rather than only the text.
-    t.cornerRadius *= scale;
-    t.cornerRadiusLarge *= scale;
-    t.rowHeight *= scale;
-    t.smallRowHeight *= scale;
-    t.padding *= scale;
-    t.smallPadding *= scale;
-    t.portRadius *= scale;
-    t.nodeHeaderHeight *= scale;
-    t.nodeMinWidth *= scale;
-    t.scrollBarWidth *= scale;
-    t.cableThickness *= scale;
+    //
+    // Scaled from a pristine set of defaults rather than multiplied in place: a
+    // display change re-registers the fonts, and multiplying what is already
+    // scaled compounds - two moves between monitors and every row is twice the
+    // height it should be.
+    const Theme design;
+    t.cornerRadius = design.cornerRadius * scale;
+    t.cornerRadiusLarge = design.cornerRadiusLarge * scale;
+    t.rowHeight = design.rowHeight * scale;
+    t.smallRowHeight = design.smallRowHeight * scale;
+    t.padding = design.padding * scale;
+    t.smallPadding = design.smallPadding * scale;
+    t.portRadius = design.portRadius * scale;
+    t.nodeHeaderHeight = design.nodeHeaderHeight * scale;
+    t.nodeMinWidth = design.nodeMinWidth * scale;
+    t.scrollBarWidth = design.scrollBarWidth * scale;
+    t.cableThickness = design.cableThickness * scale;
 }
 
 } // namespace acm::ui

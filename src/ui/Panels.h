@@ -83,6 +83,8 @@ public:
     // plugins and takes a moment, and a mistagged file should not silently
     // instantiate four of them.
     std::function<void(NodeId stemPlayer, int slot, const std::string& tagId)> onStemTagged;
+    // Copies the stem player's current selection into a build node.
+    std::function<void(NodeId stemPlayer, NodeId buildNode)> onSendSnippet;
 
 private:
     void drawParameterList(Ui& ui, Rect area, Node& node);

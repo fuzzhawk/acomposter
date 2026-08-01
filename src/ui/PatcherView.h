@@ -111,13 +111,25 @@ private:
         bool valid() const { return node != kInvalidNode; }
     };
 
+    // World units to screen pixels: the user's zoom times the display scale the
+    // fonts were rasterised at.
+    //
+    // The display scale has to be in here rather than applied on top of node
+    // sizes, because it is the whole canvas transform that has to grow. Leaving
+    // it out was a real bug: on a 150% display every label was drawn 1.5x inside
+    // a container still laid out at 1.0, so node bodies clipped their text to
+    // "c..." and "Spr..." while the same patch looked correct at 100%. Keeping
+    // it out of `zoom_` in turn keeps world coordinates - and so saved patches -
+    // independent of the display they were authored on.
+    float viewScale() const noexcept;
+
     // Node bodies are authored in unscaled units and multiplied by this, so a
     // row keeps its share of the node at every zoom. Without it the layout was
     // fixed-size inside a rect that was not: zoomed in it huddled at the top,
     // zoomed out it overflowed and the last controls fell off the bottom - and
     // since wheel zoom is multiplicative it almost never lands back on exactly
     // 1.0, so zooming out and back left the node subtly wrong.
-    float bodyScale() const noexcept { return zoom_; }
+    float bodyScale() const noexcept { return viewScale(); }
 
     Rect nodeBounds(const Node& node, const Rect& viewBounds) const;
     float nodeHeight(const Node& node) const;

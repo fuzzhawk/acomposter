@@ -84,34 +84,34 @@ void StemBrowserView::render(Ui& ui, const Rect& bounds) {
     Rect area = bounds.deflated(t.padding);
 
     // -- header ------------------------------------------------------------
-    Rect header = area.removeFromTop(26.0f);
-    ui.label(header.removeFromLeft(120.0f), "stem browser", t.text, t.fontTitle);
+    Rect header = area.removeFromTop(t.scaled(26.0f));
+    ui.label(header.removeFromLeft(t.scaled(120.0f)), "stem browser", t.text, t.fontTitle);
 
-    if (ui.button(ui.id("stems.up"), header.removeFromRight(40.0f), "up")) {
+    if (ui.button(ui.id("stems.up"), header.removeFromRight(t.scaled(40.0f)), "up")) {
         const std::string parent = pathParent(directory_);
         if (!parent.empty() && parent != directory_) navigateTo(parent);
     }
-    header.removeFromRight(6.0f);
+    header.removeFromRight(t.scaled(6.0f));
 
-    if (ui.button(ui.id("stems.tags"), header.removeFromRight(90.0f), "edit tags",
+    if (ui.button(ui.id("stems.tags"), header.removeFromRight(t.scaled(90.0f)), "edit tags",
                   showTagEditor_ ? Ui::ButtonStyle::Toggle : Ui::ButtonStyle::Normal,
                   showTagEditor_))
         showTagEditor_ = !showTagEditor_;
-    header.removeFromRight(6.0f);
+    header.removeFromRight(t.scaled(6.0f));
 
     ui.draw().addTextClipped(ui.font(t.fontSmall), header, t.textFaint, directory_,
                              DrawList::Align::Right);
 
-    area.removeFromTop(6.0f);
+    area.removeFromTop(t.scaled(6.0f));
 
     // -- tag palette -------------------------------------------------------
     drawTagPalette(ui, area);
-    area.removeFromTop(6.0f);
+    area.removeFromTop(t.scaled(6.0f));
 
     // -- waveform ----------------------------------------------------------
     Rect waveArea = area.removeFromTop(std::max(120.0f, area.height * 0.34f));
     drawWaveform(ui, waveArea);
-    area.removeFromTop(8.0f);
+    area.removeFromTop(t.scaled(8.0f));
 
     // -- listing -----------------------------------------------------------
     drawFileList(ui, area);
@@ -128,8 +128,8 @@ void StemBrowserView::drawTagPalette(Ui& ui, Rect& area) {
     const std::string currentTag = (!loadedPath_.empty() && library_)
         ? library_->tagForFile(loadedPath_) : std::string();
 
-    const float rowHeight = 22.0f;
-    const float gap = 4.0f;
+    const float rowHeight = t.scaled(22.0f);
+    const float gap = t.scaled(4.0f);
     Rect row = area.removeFromTop(rowHeight);
 
     for (int i = 0; i < palette.count(); ++i) {
@@ -160,7 +160,7 @@ void StemBrowserView::drawTagPalette(Ui& ui, Rect& area) {
         if (hovered) fill = fill.brightened(1.35f);
         ui.draw().addRectFilled(chip, fill, t.cornerRadius);
         ui.draw().addRect(chip, colour.withAlpha(isCurrent ? 1.0f : 0.5f), 1.0f, t.cornerRadius);
-        ui.draw().addTextClipped(ui.font(t.fontSmall), chip.deflated(4.0f),
+        ui.draw().addTextClipped(ui.font(t.fontSmall), chip.deflated(t.scaled(4.0f)),
                                  isCurrent ? t.text : t.textDim, tag.name,
                                  DrawList::Align::Centre);
 
@@ -174,31 +174,31 @@ void StemBrowserView::drawTagPalette(Ui& ui, Rect& area) {
     // -- editor ------------------------------------------------------------
     if (!showTagEditor_) return;
 
-    area.removeFromTop(6.0f);
-    Rect editorRow = area.removeFromTop(22.0f);
+    area.removeFromTop(t.scaled(6.0f));
+    Rect editorRow = area.removeFromTop(t.scaled(22.0f));
 
-    if (ui.button(ui.id("stems.tag.add"), editorRow.removeFromLeft(70.0f), "new tag")) {
+    if (ui.button(ui.id("stems.tag.add"), editorRow.removeFromLeft(t.scaled(70.0f)), "new tag")) {
         palette.add("new tag", 0xFF8A8F98u);
         library_->savePalette();
         editingTag_ = palette.count() - 1;
         tagNameBuffer_ = "new tag";
     }
-    editorRow.removeFromLeft(8.0f);
+    editorRow.removeFromLeft(t.scaled(8.0f));
 
     if (editingTag_ >= 0 && editingTag_ < palette.count()) {
-        if (ui.textField(ui.id("stems.tag.name"), editorRow.removeFromLeft(160.0f), tagNameBuffer_)) {
+        if (ui.textField(ui.id("stems.tag.name"), editorRow.removeFromLeft(t.scaled(160.0f)), tagNameBuffer_)) {
             palette.rename(editingTag_, tagNameBuffer_);
             library_->savePalette();
         }
-        editorRow.removeFromLeft(8.0f);
+        editorRow.removeFromLeft(t.scaled(8.0f));
 
-        if (ui.button(ui.id("stems.tag.del"), editorRow.removeFromLeft(60.0f), "delete",
+        if (ui.button(ui.id("stems.tag.del"), editorRow.removeFromLeft(t.scaled(60.0f)), "delete",
                       Ui::ButtonStyle::Danger)) {
             palette.remove(editingTag_);
             library_->savePalette();
             editingTag_ = -1;
         }
-        editorRow.removeFromLeft(8.0f);
+        editorRow.removeFromLeft(t.scaled(8.0f));
     }
 
     ui.draw().addTextClipped(ui.font(t.fontSmall), editorRow, t.textFaint,
@@ -231,7 +231,7 @@ void StemBrowserView::drawWaveform(Ui& ui, const Rect& bounds) {
         return;
     }
 
-    Rect plot = bounds.deflated(4.0f);
+    Rect plot = bounds.deflated(t.scaled(4.0f));
 
     // The tag's colour, so the waveform itself says what the file has been
     // called - the one place the tag is unmissable while listening.
@@ -297,15 +297,15 @@ void StemBrowserView::drawWaveform(Ui& ui, const Rect& bounds) {
     // -- transport ---------------------------------------------------------
     Rect controls = Rect{ bounds.left() + 6.0f, bounds.bottom() - 26.0f, 200.0f, 20.0f };
 
-    if (ui.button(ui.id("stems.play"), controls.removeFromLeft(52.0f),
+    if (ui.button(ui.id("stems.play"), controls.removeFromLeft(t.scaled(52.0f)),
                   playing ? "stop" : "play",
                   playing ? Ui::ButtonStyle::Danger : Ui::ButtonStyle::Primary)) {
         if (playing) engine_->stopPreview();
         else if (engine_) engine_->startPreview(loaded_, playhead_);
     }
-    controls.removeFromLeft(6.0f);
+    controls.removeFromLeft(t.scaled(6.0f));
 
-    if (ui.button(ui.id("stems.topatch"), controls.removeFromLeft(88.0f), "to patch")
+    if (ui.button(ui.id("stems.topatch"), controls.removeFromLeft(t.scaled(88.0f)), "to patch")
         && onSendToPatch && !loadedPath_.empty()) {
         onSendToPatch(loadedPath_, library_ ? library_->tagForFile(loadedPath_) : std::string());
     }
@@ -322,20 +322,20 @@ void StemBrowserView::drawFileList(Ui& ui, const Rect& bounds) {
     const Theme& t = theme();
 
     Rect area = bounds;
-    Rect filterRow = area.removeFromTop(22.0f);
-    ui.textField(ui.id("stems.filter"), filterRow.removeFromLeft(260.0f), filter_, "filter");
-    area.removeFromTop(6.0f);
+    Rect filterRow = area.removeFromTop(t.scaled(22.0f));
+    ui.textField(ui.id("stems.filter"), filterRow.removeFromLeft(t.scaled(260.0f)), filter_, "filter");
+    area.removeFromTop(t.scaled(6.0f));
 
     std::vector<int> visible;
     for (int i = 0; i < static_cast<int>(files_.size()); ++i)
         if (containsNoCase(files_[static_cast<std::size_t>(i)].name, filter_)) visible.push_back(i);
 
-    const float rowHeight = 22.0f;
+    const float rowHeight = t.scaled(22.0f);
     Rect content = ui.beginScroll(ui.id("stems.list"), area,
                                   static_cast<float>(visible.size()) * rowHeight);
 
     if (visible.empty()) {
-        ui.draw().addTextClipped(ui.font(t.fontSmall), content.removeFromTop(40.0f), t.textFaint,
+        ui.draw().addTextClipped(ui.font(t.fontSmall), content.removeFromTop(t.scaled(40.0f)), t.textFaint,
                                  files_.empty() ? "no audio here" : "nothing matches that filter",
                                  DrawList::Align::Centre);
     }
@@ -352,25 +352,25 @@ void StemBrowserView::drawFileList(Ui& ui, const Rect& bounds) {
         if (isSelected) ui.draw().addRectFilled(row, t.accent.withAlpha(0.12f), t.cornerRadius);
         else if (hovered) ui.draw().addRectFilled(row, t.widgetHover, t.cornerRadius);
 
-        Rect rowContent = row.deflated(4.0f);
+        Rect rowContent = row.deflated(t.scaled(4.0f));
 
         // The tag swatch leads the row, so an untagged file is obvious at a
         // glance and a folder of them reads as work still to do.
-        const Rect swatch = rowContent.removeFromLeft(10.0f);
-        rowContent.removeFromLeft(6.0f);
+        const Rect swatch = rowContent.removeFromLeft(t.scaled(10.0f));
+        rowContent.removeFromLeft(t.scaled(6.0f));
 
         if (!entry.isDirectory && library_) {
             const std::string tagId = library_->tagForFile(entry.fullPath);
             if (const library::Tag* tag = library_->palette().find(tagId))
-                ui.draw().addRectFilled(swatch.deflated(1.0f), fromArgb(tag->colour), 2.0f);
+                ui.draw().addRectFilled(swatch.deflated(t.scaled(1.0f)), fromArgb(tag->colour), 2.0f);
             else
-                ui.draw().addRect(swatch.deflated(1.0f), t.border, 1.0f, 2.0f);
+                ui.draw().addRect(swatch.deflated(t.scaled(1.0f)), t.border, 1.0f, 2.0f);
         }
 
-        ui.drawIcon(ui.draw(), rowContent.removeFromLeft(14.0f),
+        ui.drawIcon(ui.draw(), rowContent.removeFromLeft(t.scaled(14.0f)),
                     entry.isDirectory ? Ui::Icon::Folder : Ui::Icon::Wave,
                     entry.isDirectory ? t.control : t.textDim);
-        rowContent.removeFromLeft(4.0f);
+        rowContent.removeFromLeft(t.scaled(4.0f));
 
         ui.draw().addTextClipped(ui.font(t.fontUi), rowContent,
                                  isSelected ? t.text : t.textDim, entry.name);

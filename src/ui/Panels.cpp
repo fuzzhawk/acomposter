@@ -92,8 +92,8 @@ void BrowserView::refresh() {
 
 void BrowserView::drawPlaces(Ui& ui, Rect& area) {
     const Theme& t = theme();
-    const float rowHeight = 19.0f;
-    const float gap = 3.0f;
+    const float rowHeight = t.scaled(19.0f);
+    const float gap = t.scaled(3.0f);
 
     // Chips wrap onto as many rows as they need. A single row of fixed-width
     // buttons silently dropped everything past the fourth place once drives were
@@ -119,7 +119,7 @@ void BrowserView::drawPlaces(Ui& ui, Rect& area) {
         if (ui.isHot(ui.id("browser.place." + place.path))) ui.setTooltip(place.path);
     }
 
-    area.removeFromTop(6.0f);
+    area.removeFromTop(t.scaled(6.0f));
 }
 
 void BrowserView::render(Ui& ui, const Rect& bounds) {
@@ -132,15 +132,15 @@ void BrowserView::render(Ui& ui, const Rect& bounds) {
 
     Rect area = bounds.deflated(t.smallPadding);
 
-    ui.label(area.removeFromTop(18.0f), "browser", t.textDim, t.fontUiBold);
-    area.removeFromTop(2.0f);
+    ui.label(area.removeFromTop(t.scaled(18.0f)), "browser", t.textDim, t.fontUiBold);
+    area.removeFromTop(t.scaled(2.0f));
 
     drawPlaces(ui, area);
 
     // -- path row ----------------------------------------------------------
-    Rect pathRow = area.removeFromTop(22.0f);
-    const Rect upButton = pathRow.removeFromLeft(24.0f);
-    pathRow.removeFromLeft(4.0f);
+    Rect pathRow = area.removeFromTop(t.scaled(22.0f));
+    const Rect upButton = pathRow.removeFromLeft(t.scaled(24.0f));
+    pathRow.removeFromLeft(t.scaled(4.0f));
 
     if (ui.iconButton(ui.id("browser.up"), upButton, Ui::Icon::Chevron, t.textDim)) {
         const std::string parent = pathParent(currentDirectory_);
@@ -148,11 +148,11 @@ void BrowserView::render(Ui& ui, const Rect& bounds) {
     }
     if (ui.isHot(ui.id("browser.up"))) ui.setTooltip("Go up one folder");
 
-    const Rect refreshButton = pathRow.removeFromRight(24.0f);
+    const Rect refreshButton = pathRow.removeFromRight(t.scaled(24.0f));
     if (ui.iconButton(ui.id("browser.refresh"), refreshButton, Ui::Icon::Refresh, t.textDim))
         needsRefresh_ = true;
     if (ui.isHot(ui.id("browser.refresh"))) ui.setTooltip("Re-read this folder");
-    pathRow.removeFromRight(4.0f);
+    pathRow.removeFromRight(t.scaled(4.0f));
 
     // Editable, so a path can be pasted straight in. Navigating by clicking
     // through from a drive root is a lot of clicks when you already know where
@@ -167,12 +167,12 @@ void BrowserView::render(Ui& ui, const Rect& bounds) {
     }
     if (ui.isHot(ui.id("browser.path"))) ui.setTooltip(currentDirectory_);
 
-    area.removeFromTop(4.0f);
+    area.removeFromTop(t.scaled(4.0f));
 
     // -- filter ------------------------------------------------------------
-    Rect filterRow = area.removeFromTop(22.0f);
+    Rect filterRow = area.removeFromTop(t.scaled(22.0f));
     ui.textField(ui.id("browser.filter"), filterRow, filter_, "filter");
-    area.removeFromTop(6.0f);
+    area.removeFromTop(t.scaled(6.0f));
 
     // -- listing -----------------------------------------------------------
     std::vector<const DirectoryEntry*> visible;
@@ -180,13 +180,13 @@ void BrowserView::render(Ui& ui, const Rect& bounds) {
     for (const DirectoryEntry& entry : entries_)
         if (containsIgnoreCase(entry.name, filter_)) visible.push_back(&entry);
 
-    const float rowHeight = 21.0f;
+    const float rowHeight = t.scaled(21.0f);
     Rect content = ui.beginScroll(ui.id("browser.list"), area,
                                   static_cast<float>(visible.size()) * rowHeight);
 
     // An empty panel is indistinguishable from a broken one, so say which it is.
     if (visible.empty()) {
-        ui.draw().addTextClipped(ui.font(t.fontSmall), content.removeFromTop(40.0f), t.textFaint,
+        ui.draw().addTextClipped(ui.font(t.fontSmall), content.removeFromTop(t.scaled(40.0f)), t.textFaint,
                                  entries_.empty() ? "no audio or patch files here"
                                                   : "nothing matches that filter",
                                  DrawList::Align::Centre);
@@ -203,9 +203,9 @@ void BrowserView::render(Ui& ui, const Rect& bounds) {
 
         if (hovered) ui.draw().addRectFilled(row, t.widgetHover, t.cornerRadius);
 
-        Rect rowContent = row.deflated(3.0f);
-        const Rect iconArea = rowContent.removeFromLeft(16.0f);
-        rowContent.removeFromLeft(4.0f);
+        Rect rowContent = row.deflated(t.scaled(3.0f));
+        const Rect iconArea = rowContent.removeFromLeft(t.scaled(16.0f));
+        rowContent.removeFromLeft(t.scaled(4.0f));
 
         const bool isPatch = !entry->isDirectory
                           && pathExtension(entry->name) == patch::kFileExtension;
@@ -216,7 +216,7 @@ void BrowserView::render(Ui& ui, const Rect& bounds) {
                     entry->isDirectory ? t.control : (isPatch ? t.accent : t.textDim));
 
         if (!entry->isDirectory) {
-            const Rect sizeArea = rowContent.removeFromRight(52.0f);
+            const Rect sizeArea = rowContent.removeFromRight(t.scaled(52.0f));
             ui.draw().addTextClipped(ui.font(t.fontSmall), sizeArea, t.textFaint,
                                      humanSize(entry->size), DrawList::Align::Right);
         }
@@ -262,8 +262,8 @@ void InspectorView::drawPluginSection(Ui& ui, Rect& area, Node& node) {
 
     const auto& description = plugin->pluginDescription();
 
-    ui.separator(area.removeFromTop(9.0f));
-    ui.label(area.removeFromTop(16.0f), "plugin", t.textDim, t.fontUiBold);
+    ui.separator(area.removeFromTop(t.scaled(9.0f)));
+    ui.label(area.removeFromTop(t.scaled(16.0f)), "plugin", t.textDim, t.fontUiBold);
 
     char detail[192];
     std::snprintf(detail, sizeof(detail), "%s  %s  %d in / %d out%s",
@@ -271,28 +271,28 @@ void InspectorView::drawPluginSection(Ui& ui, Rect& area, Node& node) {
                   vst2::toString(description.architecture),
                   description.numInputs, description.numOutputs,
                   plugin->bridged() ? "  bridged" : "");
-    ui.label(area.removeFromTop(15.0f), detail, t.textFaint, t.fontSmall);
+    ui.label(area.removeFromTop(t.scaled(15.0f)), detail, t.textFaint, t.fontSmall);
 
-    Rect buttons = area.removeFromTop(22.0f);
+    Rect buttons = area.removeFromTop(t.scaled(22.0f));
     if (ui.button(ui.id("inspector.editor"), buttons.removeFromLeft(buttons.width * 0.5f - 3.0f),
                   plugin->editorOpen() ? "close editor" : "open editor",
                   Ui::ButtonStyle::Toggle, plugin->editorOpen(),
                   plugin->pluginLoaded() && description.hasEditor)) {
         if (onOpenPluginEditor) onOpenPluginEditor(node.id());
     }
-    buttons.removeFromLeft(6.0f);
+    buttons.removeFromLeft(t.scaled(6.0f));
 
     if (ui.button(ui.id("inspector.reload"), buttons, "reload", Ui::ButtonStyle::Normal,
                   false, plugin->pluginLoaded() || !description.path.empty()))
         plugin->reloadPlugin();
 
-    area.removeFromTop(6.0f);
+    area.removeFromTop(t.scaled(6.0f));
 
     // Programs, if the plugin has any worth showing.
     const int programCount = plugin->programCount();
     if (programCount > 1) {
-        Rect programRow = area.removeFromTop(22.0f);
-        ui.label(programRow.removeFromLeft(56.0f), "preset", t.textDim, t.fontSmall);
+        Rect programRow = area.removeFromTop(t.scaled(22.0f));
+        ui.label(programRow.removeFromLeft(t.scaled(56.0f)), "preset", t.textDim, t.fontSmall);
 
         // Names are fetched lazily: a bridged plugin with 128 programs would
         // otherwise cost 128 IPC round trips per frame.
@@ -311,7 +311,7 @@ void InspectorView::drawPluginSection(Ui& ui, Rect& area, Node& node) {
         if (ui.combo(ui.id("inspector.program"), programRow, programNames, current))
             plugin->setCurrentProgram(current);
 
-        area.removeFromTop(6.0f);
+        area.removeFromTop(t.scaled(6.0f));
     }
 }
 
@@ -323,7 +323,7 @@ void InspectorView::drawParameterList(Ui& ui, Rect area, Node& node) {
     int rows = 0;
     for (int i = 0; i < node.numParameters(); ++i) rows += node.parameter(i).automatable() ? 1 : 0;
 
-    const float rowHeight = 23.0f;
+    const float rowHeight = t.scaled(23.0f);
     Rect content = ui.beginScroll(ui.id("inspector.params"), area,
                                   static_cast<float>(rows) * rowHeight + 4.0f);
 
@@ -338,8 +338,8 @@ void InspectorView::drawParameterList(Ui& ui, Rect area, Node& node) {
         // A small square on the left toggles whether the metasurface owns this
         // parameter: freezing one control while the rest of the patch morphs is
         // one of the most useful things the surface can do.
-        const Rect lockArea = row.removeFromLeft(16.0f);
-        row.removeFromLeft(4.0f);
+        const Rect lockArea = row.removeFromLeft(t.scaled(16.0f));
+        row.removeFromLeft(t.scaled(4.0f));
 
         if (metasurface_) {
             const ParamAddress address{ node.id(), i };
@@ -373,26 +373,26 @@ void InspectorView::drawStemChains(Ui& ui, Rect& area, Node& node) {
     const Theme& t = theme();
     const Graph& graph = engine_->graph();
 
-    ui.separator(area.removeFromTop(9.0f));
-    Rect header = area.removeFromTop(18.0f);
-    ui.label(header.removeFromLeft(90.0f), "effect racks", t.textDim, t.fontUiBold);
+    ui.separator(area.removeFromTop(t.scaled(9.0f)));
+    Rect header = area.removeFromTop(t.scaled(18.0f));
+    ui.label(header.removeFromLeft(t.scaled(90.0f)), "effect racks", t.textDim, t.fontUiBold);
 
-    if (ui.button(ui.id("inspector.chains.tidy"), header.removeFromRight(46.0f), "tidy",
+    if (ui.button(ui.id("inspector.chains.tidy"), header.removeFromRight(t.scaled(46.0f)), "tidy",
                   Ui::ButtonStyle::Normal) && onTidyChains)
         onTidyChains(node.id());
-    header.removeFromRight(6.0f);
+    header.removeFromRight(t.scaled(6.0f));
 
     // The same toggle as the one on the node, in a panel with no clipping and
     // nothing overlapping it. The node-body button is the convenient one; this
     // is the one that is certain to work.
     bool matrixOpen = stems->matrixOpen;
-    if (ui.checkbox(ui.id("inspector.chains.matrix"), header.removeFromRight(70.0f),
+    if (ui.checkbox(ui.id("inspector.chains.matrix"), header.removeFromRight(t.scaled(70.0f)),
                     "matrix", matrixOpen))
         stems->matrixOpen = matrixOpen;
     if (ui.isHot(ui.id("inspector.chains.tidy")))
         ui.setTooltip("Lay the racks out in rows beside the stem player");
 
-    area.removeFromTop(3.0f);
+    area.removeFromTop(t.scaled(3.0f));
 
     for (int slot = 0; slot < kMaxStems; ++slot) {
         if (area.height < 44.0f) break;
@@ -400,9 +400,9 @@ void InspectorView::drawStemChains(Ui& ui, Rect& area, Node& node) {
         const std::vector<NodeId> chain =
             downstreamChain(graph, node.id(), static_cast<PortIndex>(slot));
 
-        Rect row = area.removeFromTop(18.0f);
+        Rect row = area.removeFromTop(t.scaled(18.0f));
 
-        const Rect addArea = row.removeFromRight(20.0f);
+        const Rect addArea = row.removeFromRight(t.scaled(20.0f));
         if (ui.iconButton(ui.idFrom(&node, 1000 + slot), addArea, Ui::Icon::Plus, t.accent)
             && onAddStemEffect)
             onAddStemEffect(node.id(), slot);
@@ -412,7 +412,7 @@ void InspectorView::drawStemChains(Ui& ui, Rect& area, Node& node) {
         // Copy is a two-step: arm a source, then pick a destination. A single
         // button cannot express "from here to there", and a dropdown of the
         // other seven stems is more clicks than arming one and hitting another.
-        const Rect copyArea = row.removeFromRight(22.0f);
+        const Rect copyArea = row.removeFromRight(t.scaled(22.0f));
         const bool armed = copySourceStem_ == slot;
         const bool arming = copySourceStem_ >= 0 && !armed;
 
@@ -444,19 +444,19 @@ void InspectorView::drawStemChains(Ui& ui, Rect& area, Node& node) {
 
         // The stem's tag leads the row: it is what decides the output and the
         // rack, so it belongs next to both rather than in a separate panel.
-        const Rect swatch = row.removeFromLeft(12.0f);
-        row.removeFromLeft(4.0f);
+        const Rect swatch = row.removeFromLeft(t.scaled(12.0f));
+        row.removeFromLeft(t.scaled(4.0f));
 
         const std::string tagId = stems->stemTag(slot);
         if (library_) {
             if (const library::Tag* tag = library_->palette().find(tagId)) {
-                ui.draw().addRectFilled(swatch.deflated(2.0f),
+                ui.draw().addRectFilled(swatch.deflated(t.scaled(2.0f)),
                                         Colour{ static_cast<float>((tag->colour >> 16) & 0xFF) / 255.0f,
                                                 static_cast<float>((tag->colour >> 8) & 0xFF) / 255.0f,
                                                 static_cast<float>(tag->colour & 0xFF) / 255.0f, 1.0f },
                                         2.0f);
             } else {
-                ui.draw().addRect(swatch.deflated(2.0f), t.border, 1.0f, 2.0f);
+                ui.draw().addRect(swatch.deflated(t.scaled(2.0f)), t.border, 1.0f, 2.0f);
             }
         }
 
@@ -472,8 +472,8 @@ void InspectorView::drawStemChains(Ui& ui, Rect& area, Node& node) {
         // Tag chips for this stem, which is where routing is actually decided:
         // the tag picks the output unless the matrix has pinned it.
         if (library_ && area.height >= 24.0f) {
-            Rect tagRow = area.removeFromTop(20.0f);
-            tagRow.removeFromLeft(14.0f);
+            Rect tagRow = area.removeFromTop(t.scaled(20.0f));
+            tagRow.removeFromLeft(t.scaled(14.0f));
 
             const library::TagPalette& palette = library_->palette();
             for (int i = 0; i < palette.count() && tagRow.width > 30.0f; ++i) {
@@ -482,7 +482,7 @@ void InspectorView::drawStemChains(Ui& ui, Rect& area, Node& node) {
                     ui.font(t.fontSmall).textWidth(tag.name) + 12.0f, tagRow.width);
 
                 Rect chip = tagRow.removeFromLeft(width);
-                tagRow.removeFromLeft(2.0f);
+                tagRow.removeFromLeft(t.scaled(2.0f));
 
                 const bool isCurrent = tag.id == tagId;
                 const Colour colour{ static_cast<float>((tag.colour >> 16) & 0xFF) / 255.0f,
@@ -510,17 +510,17 @@ void InspectorView::drawStemChains(Ui& ui, Rect& area, Node& node) {
             const Node* effect = graph.node(inChain);
             if (!effect) continue;
 
-            Rect effectRow = area.removeFromTop(17.0f);
-            effectRow.removeFromLeft(14.0f);
+            Rect effectRow = area.removeFromTop(t.scaled(17.0f));
+            effectRow.removeFromLeft(t.scaled(14.0f));
 
-            const Rect removeArea = effectRow.removeFromRight(18.0f);
+            const Rect removeArea = effectRow.removeFromRight(t.scaled(18.0f));
             if (ui.iconButton(ui.idFrom(effect, 1080), removeArea, Ui::Icon::Cross, t.textFaint)
                 && onRemoveFromChain) {
                 onRemoveFromChain(inChain);
                 break;
             }
 
-            const Rect editArea = effectRow.removeFromRight(20.0f);
+            const Rect editArea = effectRow.removeFromRight(t.scaled(20.0f));
             if (ui.iconButton(ui.idFrom(effect, 1120), editArea, Ui::Icon::Grid, t.textDim)
                 && onOpenPluginEditor)
                 onOpenPluginEditor(inChain);
@@ -530,7 +530,7 @@ void InspectorView::drawStemChains(Ui& ui, Rect& area, Node& node) {
                                      effect->name());
         }
 
-        area.removeFromTop(2.0f);
+        area.removeFromTop(t.scaled(2.0f));
     }
 }
 
@@ -540,11 +540,11 @@ void InspectorView::drawStemSection(Ui& ui, Rect& area, Node& node) {
 
     const Theme& t = theme();
 
-    ui.separator(area.removeFromTop(9.0f));
-    Rect header = area.removeFromTop(18.0f);
-    ui.label(header.removeFromLeft(90.0f), "sections", t.textDim, t.fontUiBold);
+    ui.separator(area.removeFromTop(t.scaled(9.0f)));
+    Rect header = area.removeFromTop(t.scaled(18.0f));
+    ui.label(header.removeFromLeft(t.scaled(90.0f)), "sections", t.textDim, t.fontUiBold);
 
-    if (ui.button(ui.id("inspector.section.add"), header.removeFromRight(52.0f), "add",
+    if (ui.button(ui.id("inspector.section.add"), header.removeFromRight(t.scaled(52.0f)), "add",
                   Ui::ButtonStyle::Normal, false, stems->sectionCount() < kMaxSections)) {
         // A new section starts where the last one ends, which is almost always
         // what is wanted when marking a song up in order.
@@ -559,7 +559,7 @@ void InspectorView::drawStemSection(Ui& ui, Rect& area, Node& node) {
         stems->addSection(section);
     }
 
-    area.removeFromTop(3.0f);
+    area.removeFromTop(t.scaled(3.0f));
 
     for (int i = 0; i < stems->sectionCount(); ++i) {
         if (area.height < 60.0f) break;
@@ -567,19 +567,19 @@ void InspectorView::drawStemSection(Ui& ui, Rect& area, Node& node) {
         const StemSection& section = stems->sections()[static_cast<std::size_t>(i)];
         StemSection edited = section;
 
-        Rect row = area.removeFromTop(20.0f);
+        Rect row = area.removeFromTop(t.scaled(20.0f));
         const bool isActive = i == stems->activeSection();
 
         if (isActive)
             ui.draw().addRectFilled(row, t.accent.withAlpha(0.10f), t.cornerRadius);
 
-        const Rect removeArea = row.removeFromRight(20.0f);
+        const Rect removeArea = row.removeFromRight(t.scaled(20.0f));
         if (ui.iconButton(ui.idFrom(&node, 700 + i), removeArea, Ui::Icon::Cross, t.textFaint)) {
             stems->removeSection(i);
             break;   // the list moved underneath us
         }
 
-        const Rect playArea = row.removeFromRight(22.0f);
+        const Rect playArea = row.removeFromRight(t.scaled(22.0f));
         if (ui.iconButton(ui.idFrom(&node, 730 + i), playArea, Ui::Icon::Play,
                           isActive ? t.accent : t.textDim))
             stems->requestSection(i);
@@ -602,29 +602,74 @@ void InspectorView::drawStemSection(Ui& ui, Rect& area, Node& node) {
         }
 
         // Bars.
-        Rect barRow = area.removeFromTop(18.0f);
-        ui.label(barRow.removeFromLeft(28.0f), "bar", t.textFaint, t.fontSmall);
+        Rect barRow = area.removeFromTop(t.scaled(18.0f));
+        ui.label(barRow.removeFromLeft(t.scaled(28.0f)), "bar", t.textFaint, t.fontSmall);
 
         int startBar = section.startBar;
-        if (ui.intField(ui.idFrom(&node, 820 + i), barRow.removeFromLeft(52.0f), startBar, 0, 4096)) {
+        if (ui.intField(ui.idFrom(&node, 820 + i), barRow.removeFromLeft(t.scaled(52.0f)), startBar, 0, 4096)) {
             edited.startBar = startBar;
             stems->updateSection(i, edited);
         }
 
-        barRow.removeFromLeft(6.0f);
-        ui.label(barRow.removeFromLeft(30.0f), "len", t.textFaint, t.fontSmall);
+        barRow.removeFromLeft(t.scaled(6.0f));
+        ui.label(barRow.removeFromLeft(t.scaled(30.0f)), "len", t.textFaint, t.fontSmall);
 
         int lengthBars = section.lengthBars;
-        if (ui.intField(ui.idFrom(&node, 850 + i), barRow.removeFromLeft(52.0f), lengthBars, 1, 512)) {
+        if (ui.intField(ui.idFrom(&node, 850 + i), barRow.removeFromLeft(t.scaled(52.0f)), lengthBars, 1, 512)) {
             edited.lengthBars = lengthBars;
             stems->updateSection(i, edited);
         }
 
-        area.removeFromTop(3.0f);
+        area.removeFromTop(t.scaled(3.0f));
+    }
+
+    // -- snippet -----------------------------------------------------------
+    // The selection lives on the stem player; sending it copies the audio into
+    // a build node, which then owns it. Listing the build nodes rather than
+    // assuming one means a patch can hold several.
+    if (stems->snippet().valid() && engine_ && area.height >= 44.0f) {
+        ui.separator(area.removeFromTop(t.scaled(9.0f)));
+
+        Rect snipHeader = area.removeFromTop(t.scaled(16.0f));
+        ui.label(snipHeader.removeFromLeft(t.scaled(70.0f)), "snippet", t.textDim, t.fontUiBold);
+
+        char detail[128];
+        std::snprintf(detail, sizeof(detail), "%s  %.2fs%s",
+                      stems->stemName(stems->snippet().slot).c_str(),
+                      stems->snippet().lengthSeconds,
+                      stems->snippet().tempoMatched ? "  tempo" : "  free");
+        ui.label(snipHeader, detail, t.warning, t.fontSmall, DrawList::Align::Right);
+
+        area.removeFromTop(t.scaled(3.0f));
+        Rect sendRow = area.removeFromTop(t.scaled(20.0f));
+
+        std::vector<std::string> names;
+        std::vector<NodeId> ids;
+        for (const auto& candidate : engine_->graph().nodes()) {
+            if (candidate->typeName() != "build") continue;
+            names.push_back(candidate->name());
+            ids.push_back(candidate->id());
+        }
+
+        if (names.empty()) {
+            ui.label(sendRow, "add a build node to send it to", t.textFaint, t.fontSmall);
+        } else if (names.size() == 1) {
+            if (ui.button(ui.id("inspector.snippet.send"), sendRow,
+                          "send to " + names[0], Ui::ButtonStyle::Primary)
+                && onSendSnippet)
+                onSendSnippet(node.id(), ids[0]);
+        } else {
+            int chosen = -1;
+            if (ui.combo(ui.id("inspector.snippet.send"), sendRow, names, chosen)
+                && chosen >= 0 && onSendSnippet)
+                onSendSnippet(node.id(), ids[static_cast<std::size_t>(chosen)]);
+        }
+
+        area.removeFromTop(t.scaled(3.0f));
     }
 
     if (stems->sectionCount() == 0) {
-        ui.draw().addTextClipped(ui.font(t.fontSmall), area.removeFromTop(28.0f), t.textFaint,
+        ui.draw().addTextClipped(ui.font(t.fontSmall), area.removeFromTop(t.scaled(28.0f)), t.textFaint,
                                  "no sections yet - the whole song loops");
     }
 }
@@ -635,19 +680,19 @@ void InspectorView::drawColorSection(Ui& ui, Rect& area, Node& node) {
 
     const Theme& t = theme();
 
-    ui.separator(area.removeFromTop(9.0f));
-    Rect header = area.removeFromTop(18.0f);
-    ui.label(header.removeFromLeft(90.0f), "colour targets", t.textDim, t.fontUiBold);
+    ui.separator(area.removeFromTop(t.scaled(9.0f)));
+    Rect header = area.removeFromTop(t.scaled(18.0f));
+    ui.label(header.removeFromLeft(t.scaled(90.0f)), "colour targets", t.textDim, t.fontUiBold);
 
     char count[48];
     std::snprintf(count, sizeof(count), "%d", static_cast<int>(color->targets().size()));
     ui.label(header, count, t.textFaint, t.fontSmall, DrawList::Align::Right);
 
-    area.removeFromTop(3.0f);
+    area.removeFromTop(t.scaled(3.0f));
 
     // One press wires the colour knob to every plugin on every stem. Building
     // the racks is the work; this is meant to be the part that is not.
-    Rect autoRow = area.removeFromTop(20.0f);
+    Rect autoRow = area.removeFromTop(t.scaled(20.0f));
     if (ui.button(ui.id("inspector.color.autolink"), autoRow, "link every stem rack",
                   Ui::ButtonStyle::Primary)) {
         int plugins = 0;
@@ -663,12 +708,12 @@ void InspectorView::drawColorSection(Ui& ui, Rect& area, Node& node) {
     if (ui.isHot(ui.id("inspector.color.autolink")))
         ui.setTooltip("Adopt every plugin hanging off every stem player's outputs");
 
-    area.removeFromTop(3.0f);
+    area.removeFromTop(t.scaled(3.0f));
 
     // Adopting a whole node is how a chain gets set up: pick the plugin, take
     // every parameter it has, then capture the two ends by ear and prune.
-    Rect adoptRow = area.removeFromTop(20.0f);
-    ui.label(adoptRow.removeFromLeft(46.0f), "adopt", t.textFaint, t.fontSmall);
+    Rect adoptRow = area.removeFromTop(t.scaled(20.0f));
+    ui.label(adoptRow.removeFromLeft(t.scaled(46.0f)), "adopt", t.textFaint, t.fontSmall);
 
     std::vector<std::string> names;
     std::vector<NodeId> ids;
@@ -691,15 +736,15 @@ void InspectorView::drawColorSection(Ui& ui, Rect& area, Node& node) {
         }
     }
 
-    area.removeFromTop(3.0f);
+    area.removeFromTop(t.scaled(3.0f));
 
     for (int i = 0; i < static_cast<int>(color->targets().size()); ++i) {
         if (area.height < 40.0f) break;
 
         const ColorTarget& target = color->targets()[static_cast<std::size_t>(i)];
-        Rect row = area.removeFromTop(17.0f);
+        Rect row = area.removeFromTop(t.scaled(17.0f));
 
-        const Rect removeArea = row.removeFromRight(18.0f);
+        const Rect removeArea = row.removeFromRight(t.scaled(18.0f));
         if (ui.iconButton(ui.idFrom(&node, 900 + i), removeArea, Ui::Icon::Cross, t.textFaint)) {
             color->removeTarget(i);
             break;
@@ -708,7 +753,7 @@ void InspectorView::drawColorSection(Ui& ui, Rect& area, Node& node) {
         // How far this target actually travels, drawn as a bar - a target whose
         // ends are identical does nothing, and that should be visible without
         // opening it.
-        const Rect travelArea = row.removeFromRight(40.0f).deflated(2.0f);
+        const Rect travelArea = row.removeFromRight(t.scaled(40.0f)).deflated(t.scaled(2.0f));
         const float travel = std::max(std::abs(target.redValue - target.neutralValue),
                                       std::abs(target.blueValue - target.neutralValue));
         ui.draw().addRectFilled(travelArea, t.widgetTrack, 2.0f);
@@ -731,9 +776,9 @@ void InspectorView::drawBuildSection(Ui& ui, Rect& area, Node& node) {
 
     const Theme& t = theme();
 
-    ui.separator(area.removeFromTop(9.0f));
-    ui.label(area.removeFromTop(18.0f), "build targets", t.textDim, t.fontUiBold);
-    area.removeFromTop(3.0f);
+    ui.separator(area.removeFromTop(t.scaled(9.0f)));
+    ui.label(area.removeFromTop(t.scaled(18.0f)), "build targets", t.textDim, t.fontUiBold);
+    area.removeFromTop(t.scaled(3.0f));
 
     // Two pickers, one per kind of target. Listing only the nodes that can
     // actually be driven means a wrong choice is not possible.
@@ -744,8 +789,8 @@ void InspectorView::drawBuildSection(Ui& ui, Rect& area, Node& node) {
     // opened both and the selection landed on whichever drew last.
     const auto picker = [&](int salt, const char* caption, const char* typeName, NodeId current,
                             const std::function<void(NodeId)>& assign) {
-        Rect row = area.removeFromTop(20.0f);
-        ui.label(row.removeFromLeft(52.0f), caption, t.textFaint, t.fontSmall);
+        Rect row = area.removeFromTop(t.scaled(20.0f));
+        ui.label(row.removeFromLeft(t.scaled(52.0f)), caption, t.textFaint, t.fontSmall);
 
         std::vector<std::string> names{ "none" };
         std::vector<NodeId> ids{ kInvalidNode };
@@ -762,7 +807,7 @@ void InspectorView::drawBuildSection(Ui& ui, Rect& area, Node& node) {
             && selected >= 0 && selected < static_cast<int>(ids.size()))
             assign(ids[static_cast<std::size_t>(selected)]);
 
-        area.removeFromTop(3.0f);
+        area.removeFromTop(t.scaled(3.0f));
     };
 
     picker(950, "stems", "stem.player", build->stemPlayer(),
@@ -770,8 +815,8 @@ void InspectorView::drawBuildSection(Ui& ui, Rect& area, Node& node) {
     picker(951, "colour", "color", build->colorNode(),
            [build](NodeId id) { build->setColorNode(id); });
 
-    Rect riserRow = area.removeFromTop(18.0f);
-    ui.label(riserRow.removeFromLeft(52.0f), "riser", t.textFaint, t.fontSmall);
+    Rect riserRow = area.removeFromTop(t.scaled(18.0f));
+    ui.label(riserRow.removeFromLeft(t.scaled(52.0f)), "riser", t.textFaint, t.fontSmall);
     ui.draw().addTextClipped(ui.font(t.fontSmall), riserRow,
                              build->riserPath().empty() ? t.textFaint : t.textDim,
                              build->riserPath().empty() ? "drop an audio file on the node"
@@ -785,33 +830,33 @@ void InspectorView::render(Ui& ui, const Rect& bounds, NodeId nodeId) {
     ui.draw().addRectFilled(Rect{ bounds.left(), bounds.top(), 1.0f, bounds.height }, t.border);
 
     Rect area = bounds.deflated(t.smallPadding);
-    ui.label(area.removeFromTop(18.0f), "inspector", t.textDim, t.fontUiBold);
-    area.removeFromTop(2.0f);
+    ui.label(area.removeFromTop(t.scaled(18.0f)), "inspector", t.textDim, t.fontUiBold);
+    area.removeFromTop(t.scaled(2.0f));
 
     Node* node = engine_ ? engine_->graph().node(nodeId) : nullptr;
     if (!node) {
-        ui.draw().addTextClipped(ui.font(t.fontSmall), area.removeFromTop(40.0f), t.textFaint,
+        ui.draw().addTextClipped(ui.font(t.fontSmall), area.removeFromTop(t.scaled(40.0f)), t.textFaint,
                                  "select a node", DrawList::Align::Centre);
         return;
     }
 
     // -- identity ----------------------------------------------------------
-    Rect nameRow = area.removeFromTop(24.0f);
+    Rect nameRow = area.removeFromTop(t.scaled(24.0f));
     if (nameBufferFor_ != nodeId) { nameBuffer_ = node->name(); nameBufferFor_ = nodeId; }
     if (ui.textField(ui.id("inspector.name"), nameRow, nameBuffer_, "node name") && !nameBuffer_.empty())
         node->setName(nameBuffer_);
 
-    Rect typeRow = area.removeFromTop(15.0f);
+    Rect typeRow = area.removeFromTop(t.scaled(15.0f));
     char typeText[160];
     std::snprintf(typeText, sizeof(typeText), "%s  -  %s",
                   node->typeName().c_str(), toString(node->category()));
     ui.label(typeRow, typeText, t.textFaint, t.fontSmall);
-    area.removeFromTop(4.0f);
+    area.removeFromTop(t.scaled(4.0f));
 
     // -- state -------------------------------------------------------------
-    Rect stateRow = area.removeFromTop(22.0f);
+    Rect stateRow = area.removeFromTop(t.scaled(22.0f));
     bool bypassed = node->bypassed();
-    if (ui.checkbox(ui.id("inspector.bypass"), stateRow.removeFromLeft(90.0f), "bypass", bypassed))
+    if (ui.checkbox(ui.id("inspector.bypass"), stateRow.removeFromLeft(t.scaled(90.0f)), "bypass", bypassed))
         node->setBypassed(bypassed);
 
     if (node->latencyFrames() > 0) {
@@ -821,11 +866,11 @@ void InspectorView::render(Ui& ui, const Rect& bounds, NodeId nodeId) {
     }
 
     if (!node->errorText().empty()) {
-        const Rect errorRow = area.removeFromTop(30.0f);
+        const Rect errorRow = area.removeFromTop(t.scaled(30.0f));
         ui.draw().addRectFilled(errorRow, t.danger.withAlpha(0.10f), t.cornerRadius);
-        ui.draw().addTextClipped(ui.font(t.fontSmall), errorRow.deflated(4.0f), t.danger,
+        ui.draw().addTextClipped(ui.font(t.fontSmall), errorRow.deflated(t.scaled(4.0f)), t.danger,
                                  node->errorText());
-        area.removeFromTop(4.0f);
+        area.removeFromTop(t.scaled(4.0f));
     }
 
     drawPluginSection(ui, area, *node);
@@ -835,16 +880,16 @@ void InspectorView::render(Ui& ui, const Rect& bounds, NodeId nodeId) {
     drawBuildSection(ui, area, *node);
 
     // -- comment -----------------------------------------------------------
-    ui.separator(area.removeFromTop(9.0f));
-    Rect commentRow = area.removeFromTop(22.0f);
+    ui.separator(area.removeFromTop(t.scaled(9.0f)));
+    Rect commentRow = area.removeFromTop(t.scaled(22.0f));
     if (commentBufferFor_ != nodeId) { commentBuffer_ = node->comment; commentBufferFor_ = nodeId; }
     if (ui.textField(ui.id("inspector.comment"), commentRow, commentBuffer_, "note"))
         node->comment = commentBuffer_;
 
-    area.removeFromTop(6.0f);
-    ui.separator(area.removeFromTop(9.0f));
-    ui.label(area.removeFromTop(16.0f), "parameters", t.textDim, t.fontUiBold);
-    area.removeFromTop(2.0f);
+    area.removeFromTop(t.scaled(6.0f));
+    ui.separator(area.removeFromTop(t.scaled(9.0f)));
+    ui.label(area.removeFromTop(t.scaled(16.0f)), "parameters", t.textDim, t.fontUiBold);
+    area.removeFromTop(t.scaled(2.0f));
 
     drawParameterList(ui, area, *node);
 }
@@ -866,36 +911,36 @@ void PluginManagerView::render(Ui& ui, const Rect& bounds) {
     Rect area = bounds.deflated(t.padding);
 
     // -- header ------------------------------------------------------------
-    Rect header = area.removeFromTop(26.0f);
-    ui.label(header.removeFromLeft(160.0f), "vst2 plugins", t.text, t.fontTitle);
+    Rect header = area.removeFromTop(t.scaled(26.0f));
+    ui.label(header.removeFromLeft(t.scaled(160.0f)), "vst2 plugins", t.text, t.fontTitle);
 
     const bool scanning = manager_->scanning();
 
-    if (ui.button(ui.id("plugins.scan"), header.removeFromRight(96.0f),
+    if (ui.button(ui.id("plugins.scan"), header.removeFromRight(t.scaled(96.0f)),
                   scanning ? "cancel" : "scan", scanning ? Ui::ButtonStyle::Danger
                                                           : Ui::ButtonStyle::Primary)) {
         if (scanning) manager_->cancelScan();
         else manager_->startScan(false);
     }
-    header.removeFromRight(6.0f);
+    header.removeFromRight(t.scaled(6.0f));
 
-    if (ui.button(ui.id("plugins.rescan"), header.removeFromRight(96.0f), "rescan all",
+    if (ui.button(ui.id("plugins.rescan"), header.removeFromRight(t.scaled(96.0f)), "rescan all",
                   Ui::ButtonStyle::Normal, false, !scanning))
         manager_->startScan(true);
-    header.removeFromRight(6.0f);
+    header.removeFromRight(t.scaled(6.0f));
 
-    if (ui.button(ui.id("plugins.addpath"), header.removeFromRight(110.0f), "add folder",
+    if (ui.button(ui.id("plugins.addpath"), header.removeFromRight(t.scaled(110.0f)), "add folder",
                   Ui::ButtonStyle::Normal, false, !scanning && onBrowseForFolder != nullptr)) {
         const std::string folder = onBrowseForFolder ? onBrowseForFolder() : std::string();
         if (!folder.empty()) manager_->addSearchPath(folder);
     }
 
-    area.removeFromTop(6.0f);
+    area.removeFromTop(t.scaled(6.0f));
 
     // -- scan progress -----------------------------------------------------
     if (scanning) {
         const vst2::ScanProgress progress = manager_->progress();
-        Rect progressRow = area.removeFromTop(20.0f);
+        Rect progressRow = area.removeFromTop(t.scaled(20.0f));
 
         const float fraction = progress.filesFound > 0
             ? static_cast<float>(progress.filesScanned) / static_cast<float>(progress.filesFound)
@@ -910,43 +955,43 @@ void PluginManagerView::render(Ui& ui, const Rect& bounds) {
         std::snprintf(text, sizeof(text), "%d / %d   %d found   %d failed   %s",
                       progress.filesScanned, progress.filesFound,
                       progress.pluginsFound, progress.failures, progress.currentFile.c_str());
-        ui.draw().addTextClipped(ui.font(t.fontSmall), progressRow.deflated(4.0f), t.text, text);
-        area.removeFromTop(6.0f);
+        ui.draw().addTextClipped(ui.font(t.fontSmall), progressRow.deflated(t.scaled(4.0f)), t.text, text);
+        area.removeFromTop(t.scaled(6.0f));
     }
 
     // -- search paths ------------------------------------------------------
-    Rect pathsRow = area.removeFromTop(18.0f);
+    Rect pathsRow = area.removeFromTop(t.scaled(18.0f));
     ui.label(pathsRow, "search folders", t.textDim, t.fontSmall);
 
     for (const std::string& path : manager_->searchPaths()) {
         if (area.height < 80.0f) break;
-        Rect row = area.removeFromTop(17.0f);
+        Rect row = area.removeFromTop(t.scaled(17.0f));
 
-        const Rect removeArea = row.removeFromRight(18.0f);
+        const Rect removeArea = row.removeFromRight(t.scaled(18.0f));
         if (ui.iconButton(ui.idFrom(&path, 3), removeArea, Ui::Icon::Cross, t.textFaint))
             manager_->removeSearchPath(path);
 
         ui.draw().addTextClipped(ui.font(t.fontSmall), row, t.textFaint, path);
     }
 
-    area.removeFromTop(6.0f);
-    ui.separator(area.removeFromTop(9.0f));
+    area.removeFromTop(t.scaled(6.0f));
+    ui.separator(area.removeFromTop(t.scaled(9.0f)));
 
     // -- filter and options ------------------------------------------------
-    Rect toolRow = area.removeFromTop(24.0f);
-    ui.textField(ui.id("plugins.search"), toolRow.removeFromLeft(260.0f), search_, "search plugins");
-    toolRow.removeFromLeft(12.0f);
+    Rect toolRow = area.removeFromTop(t.scaled(24.0f));
+    ui.textField(ui.id("plugins.search"), toolRow.removeFromLeft(t.scaled(260.0f)), search_, "search plugins");
+    toolRow.removeFromLeft(t.scaled(12.0f));
 
-    ui.checkbox(ui.id("plugins.bridge"), toolRow.removeFromLeft(190.0f),
+    ui.checkbox(ui.id("plugins.bridge"), toolRow.removeFromLeft(t.scaled(190.0f)),
                 "always bridge (isolate)", forceBridge_);
     if (ui.isHot(ui.id("plugins.bridge")))
         ui.setTooltip("Run even same-architecture plugins in a helper process, so a crash "
                       "cannot take acomposter with it");
 
-    ui.checkbox(ui.id("plugins.failures"), toolRow.removeFromLeft(150.0f),
+    ui.checkbox(ui.id("plugins.failures"), toolRow.removeFromLeft(t.scaled(150.0f)),
                 "show failures", showFailures_);
 
-    area.removeFromTop(6.0f);
+    area.removeFromTop(t.scaled(6.0f));
 
     // -- listing -----------------------------------------------------------
     const std::vector<vst2::PluginDescription> plugins = manager_->plugins();
@@ -962,17 +1007,17 @@ void PluginManagerView::render(Ui& ui, const Rect& bounds) {
     // left. Floating it over the list would put a row underneath every button,
     // and because the rows are processed first they would take the press and the
     // buttons would never fire.
-    Rect actionRow = area.removeFromBottom(38.0f);
-    actionRow.removeFromTop(8.0f);
+    Rect actionRow = area.removeFromBottom(t.scaled(38.0f));
+    actionRow.removeFromTop(t.scaled(8.0f));
 
-    const float rowHeight = 26.0f;
+    const float rowHeight = t.scaled(26.0f);
     const float contentHeight = static_cast<float>(visible.size()) * rowHeight
                               + (showFailures_ ? static_cast<float>(failures.size()) * 20.0f + 26.0f : 0.0f);
 
     Rect content = ui.beginScroll(ui.id("plugins.list"), area, contentHeight);
 
     if (visible.empty() && !scanning) {
-        ui.draw().addTextClipped(ui.font(t.fontUi), content.removeFromTop(48.0f), t.textFaint,
+        ui.draw().addTextClipped(ui.font(t.fontUi), content.removeFromTop(t.scaled(48.0f)), t.textFaint,
                                  plugins.empty() ? "no plugins found yet - press scan"
                                                  : "nothing matches that search",
                                  DrawList::Align::Centre);
@@ -991,23 +1036,23 @@ void PluginManagerView::render(Ui& ui, const Rect& bounds) {
         if (isSelected) ui.draw().addRectFilled(row, t.accent.withAlpha(0.10f), t.cornerRadius);
         else if (hovered) ui.draw().addRectFilled(row, t.widgetHover, t.cornerRadius);
 
-        Rect rowContent = row.deflated(4.0f);
+        Rect rowContent = row.deflated(t.scaled(4.0f));
 
         // Architecture badge: the single most useful thing to see at a glance,
         // because it determines whether the plugin will be bridged.
-        const Rect badge = rowContent.removeFromRight(46.0f);
+        const Rect badge = rowContent.removeFromRight(t.scaled(46.0f));
         const bool needsBridge = vst2::PluginManager::requiresBridge(plugin.architecture);
-        ui.draw().addRectFilled(badge.deflated(1.0f),
+        ui.draw().addRectFilled(badge.deflated(t.scaled(1.0f)),
                                 needsBridge ? t.control.withAlpha(0.18f) : t.accent.withAlpha(0.14f),
                                 2.0f);
         ui.draw().addTextClipped(ui.font(t.fontSmall), badge,
                                  needsBridge ? t.control : t.accent,
                                  plugin.architecture == vst2::Architecture::X86 ? "x86" : "x64",
                                  DrawList::Align::Centre);
-        rowContent.removeFromRight(8.0f);
+        rowContent.removeFromRight(t.scaled(8.0f));
 
         if (plugin.isSynth) {
-            const Rect synthBadge = rowContent.removeFromRight(46.0f);
+            const Rect synthBadge = rowContent.removeFromRight(t.scaled(46.0f));
             ui.draw().addTextClipped(ui.font(t.fontSmall), synthBadge, t.textFaint, "synth",
                                      DrawList::Align::Centre);
         }
@@ -1028,14 +1073,14 @@ void PluginManagerView::render(Ui& ui, const Rect& bounds) {
     }
 
     if (showFailures_ && !failures.empty()) {
-        content.removeFromTop(8.0f);
-        ui.label(content.removeFromTop(18.0f), "could not be loaded", t.danger, t.fontUiBold);
+        content.removeFromTop(t.scaled(8.0f));
+        ui.label(content.removeFromTop(t.scaled(18.0f)), "could not be loaded", t.danger, t.fontUiBold);
 
         for (const vst2::FailedPlugin& failure : failures) {
-            const Rect row = content.removeFromTop(19.0f);
+            const Rect row = content.removeFromTop(t.scaled(19.0f));
             if (row.bottom() < area.top() || row.top() > area.bottom()) continue;
 
-            Rect rowContent = row.deflated(3.0f);
+            Rect rowContent = row.deflated(t.scaled(3.0f));
             ui.draw().addTextClipped(ui.font(t.fontSmall),
                                      rowContent.removeFromLeft(rowContent.width * 0.4f),
                                      t.textDim, pathLeaf(failure.path));
@@ -1054,13 +1099,13 @@ void PluginManagerView::render(Ui& ui, const Rect& bounds) {
     for (const vst2::PluginDescription* candidate : visible)
         if (candidate->path == selectedPath_) { selected = candidate; break; }
 
-    const Rect addRect = actionRow.removeFromRight(174.0f);
+    const Rect addRect = actionRow.removeFromRight(t.scaled(174.0f));
     if (ui.button(ui.id("plugins.add"), addRect, "add to patch",
                   Ui::ButtonStyle::Primary, false, selected != nullptr) && selected) {
         if (onAddPlugin) onAddPlugin(*selected, forceBridge_);
     }
 
-    actionRow.removeFromRight(10.0f);
+    actionRow.removeFromRight(t.scaled(10.0f));
     ui.draw().addTextClipped(ui.font(t.fontSmall), actionRow, t.textFaint,
                              selected ? selected->name + "  -  " + selected->vendor
                                       : "select a plugin, or double-click one to add it",
@@ -1500,7 +1545,7 @@ void TransportBar::render(Ui& ui, const Rect& bounds, MainView& activeView) {
                             t.border);
 
     Rect area = bounds.deflated(t.smallPadding);
-    area.removeFromLeft(4.0f);
+    area.removeFromLeft(t.scaled(4.0f));
 
     // -- patch actions -----------------------------------------------------
     const float buttonSize = area.height;
@@ -1523,9 +1568,9 @@ void TransportBar::render(Ui& ui, const Rect& bounds, MainView& activeView) {
         if (onOpenSettings) onOpenSettings();
     if (ui.isHot(ui.id("bar.settings"))) ui.setTooltip("Audio settings  (Ctrl+,)");
 
-    area.removeFromLeft(10.0f);
-    ui.separator(area.removeFromLeft(1.0f), true);
-    area.removeFromLeft(10.0f);
+    area.removeFromLeft(t.scaled(10.0f));
+    ui.separator(area.removeFromLeft(t.scaled(1.0f)), true);
+    area.removeFromLeft(t.scaled(10.0f));
 
     // -- transport ---------------------------------------------------------
     const bool playing = transport.playing();
@@ -1547,12 +1592,12 @@ void TransportBar::render(Ui& ui, const Rect& bounds, MainView& activeView) {
                       loop ? t.accent : t.textDim, loop))
         transport.setLoop(!loop, transport.loopStartPpq(), transport.loopEndPpq());
 
-    area.removeFromLeft(10.0f);
-    ui.separator(area.removeFromLeft(1.0f), true);
-    area.removeFromLeft(10.0f);
+    area.removeFromLeft(t.scaled(10.0f));
+    ui.separator(area.removeFromLeft(t.scaled(1.0f)), true);
+    area.removeFromLeft(t.scaled(10.0f));
 
     // -- tempo -------------------------------------------------------------
-    const Rect bpmArea = area.removeFromLeft(72.0f);
+    const Rect bpmArea = area.removeFromLeft(t.scaled(72.0f));
     const UiId bpmField = ui.id("bar.bpm");
 
     if (!ui.editingText(bpmField)) {
@@ -1566,10 +1611,10 @@ void TransportBar::render(Ui& ui, const Rect& bounds, MainView& activeView) {
         if (parsed >= 20.0 && parsed <= 999.0) transport.setBpm(parsed);
     }
     if (ui.isHot(bpmField)) ui.setTooltip("Tempo in beats per minute");
-    area.removeFromLeft(4.0f);
+    area.removeFromLeft(t.scaled(4.0f));
 
     tapClock_ += static_cast<double>(ui.deltaSeconds());
-    if (ui.button(ui.id("bar.tap"), area.removeFromLeft(42.0f), "tap")) {
+    if (ui.button(ui.id("bar.tap"), area.removeFromLeft(t.scaled(42.0f)), "tap")) {
         const double bpm = transport.tap(tapClock_);
         if (bpm > 0.0) {
             char message[64];
@@ -1577,11 +1622,11 @@ void TransportBar::render(Ui& ui, const Rect& bounds, MainView& activeView) {
             ui.notify(message, t.control, 1.5f);
         }
     }
-    area.removeFromLeft(10.0f);
+    area.removeFromLeft(t.scaled(10.0f));
 
     // -- position readout --------------------------------------------------
     const TransportState state = transport.snapshot();
-    const Rect positionArea = area.removeFromLeft(112.0f);
+    const Rect positionArea = area.removeFromLeft(t.scaled(112.0f));
 
     ui.draw().addRectFilled(positionArea, t.panelSunken, t.cornerRadius);
     char position[64];
@@ -1591,9 +1636,9 @@ void TransportBar::render(Ui& ui, const Rect& bounds, MainView& activeView) {
     ui.draw().addTextClipped(ui.font(t.fontMono), positionArea, playing ? t.accent : t.textDim,
                              position, DrawList::Align::Centre);
 
-    area.removeFromLeft(10.0f);
-    ui.separator(area.removeFromLeft(1.0f), true);
-    area.removeFromLeft(10.0f);
+    area.removeFromLeft(t.scaled(10.0f));
+    ui.separator(area.removeFromLeft(t.scaled(1.0f)), true);
+    area.removeFromLeft(t.scaled(10.0f));
 
     // -- view tabs (right aligned) ----------------------------------------
     // The library tabs are grouped and separated from the document tabs by a
@@ -1601,7 +1646,14 @@ void TransportBar::render(Ui& ui, const Rect& bounds, MainView& activeView) {
     // the left of it survives a patch being closed and everything to the right
     // of it is the patch.
     constexpr int kTabCount = static_cast<int>(MainView::Count);
-    Rect tabArea = area.removeFromRight(560.0f);
+
+    // The tabs get their natural width where the bar can afford it, and give way
+    // only to the panic button. Seven tabs plus a master section is wider than a
+    // 1600-pixel window on a 150% display; before this the tabs took their 560
+    // regardless and the master fader and panic button were not made small but
+    // pushed off the end of the bar entirely.
+    Rect tabArea = area.removeFromRight(
+        clampValue(area.width - t.scaled(46.0f), t.scaled(300.0f), t.scaled(560.0f)));
     const float tabWidth = tabArea.width / static_cast<float>(kTabCount);
 
     for (int i = 0; i < kTabCount; ++i) {
@@ -1609,7 +1661,7 @@ void TransportBar::render(Ui& ui, const Rect& bounds, MainView& activeView) {
 
         // The rule between the library group and the document group.
         if (view == MainView::Patch) {
-            Rect rule = tabArea.removeFromLeft(9.0f);
+            Rect rule = tabArea.removeFromLeft(t.scaled(9.0f));
             ui.separator(Rect{ rule.centre().x, rule.top() + 6.0f, 1.0f, rule.height - 12.0f },
                          true);
         }
@@ -1617,29 +1669,44 @@ void TransportBar::render(Ui& ui, const Rect& bounds, MainView& activeView) {
         const Rect tab = tabArea.removeFromLeft(view >= MainView::Patch
                                                     ? tabWidth - 9.0f / 3.0f : tabWidth);
         const bool selected = activeView == view;
-        if (ui.button(ui.id(std::string("bar.tab.") + toString(view)), tab.deflated(2.0f),
+        if (ui.button(ui.id(std::string("bar.tab.") + toString(view)), tab.deflated(t.scaled(2.0f)),
                       toString(view), Ui::ButtonStyle::Toggle, selected))
             activeView = view;
     }
 
-    area.removeFromRight(12.0f);
+    area.removeFromRight(t.scaled(12.0f));
 
     // -- master section ----------------------------------------------------
-    const Rect meterArea = area.removeFromRight(28.0f);
-    ui.stereoMeter(meterArea.deflated(3.0f), engine_->masterPeak(0), engine_->masterPeak(1), false);
-    area.removeFromRight(6.0f);
+    // Laid out in reverse order of what a set can afford to lose, and each part
+    // only claimed while there is still room for it. On a narrow window the
+    // patch name goes first, then the meter, then the fader; panic is drawn
+    // whatever else has to give, because the one control that has to be
+    // reachable is the one that stops the noise.
+    const float panicWidth = buttonSize + t.scaled(6.0f);
 
-    const Rect masterArea = area.removeFromRight(130.0f);
-    float masterNormalised = (engine_->masterGainDb() + 96.0f) / 108.0f;
-    if (ui.sliderNormalised(ui.id("bar.master"), masterArea.deflated(6.0f), masterNormalised, t.accent))
-        engine_->setMasterGainDb(masterNormalised * 108.0f - 96.0f);
-    if (ui.isHot(ui.id("bar.master"))) {
-        char text[48];
-        std::snprintf(text, sizeof(text), "master %.1f dB", static_cast<double>(engine_->masterGainDb()));
-        ui.setTooltip(text);
+    if (area.width > panicWidth + t.scaled(34.0f)) {
+        const Rect meterArea = area.removeFromRight(t.scaled(28.0f));
+        ui.stereoMeter(meterArea.deflated(t.scaled(3.0f)),
+                       engine_->masterPeak(0), engine_->masterPeak(1), false);
+        area.removeFromRight(t.scaled(6.0f));
     }
 
-    area.removeFromRight(6.0f);
+    if (area.width > panicWidth + t.scaled(80.0f)) {
+        const Rect masterArea = area.removeFromRight(
+            std::min(t.scaled(130.0f), area.width - panicWidth));
+        float masterNormalised = (engine_->masterGainDb() + 96.0f) / 108.0f;
+        if (ui.sliderNormalised(ui.id("bar.master"), masterArea.deflated(t.scaled(6.0f)),
+                                masterNormalised, t.accent))
+            engine_->setMasterGainDb(masterNormalised * 108.0f - 96.0f);
+        if (ui.isHot(ui.id("bar.master"))) {
+            char text[48];
+            std::snprintf(text, sizeof(text), "master %.1f dB",
+                          static_cast<double>(engine_->masterGainDb()));
+            ui.setTooltip(text);
+        }
+        area.removeFromRight(t.scaled(6.0f));
+    }
+
     const Rect panicArea = area.removeFromRight(buttonSize);
     if (ui.iconButton(ui.id("bar.panic"), panicArea, Ui::Icon::Cross, t.danger))
         engine_->panic();
@@ -1647,7 +1714,7 @@ void TransportBar::render(Ui& ui, const Rect& bounds, MainView& activeView) {
         ui.setTooltip("Panic: silence and reset every node");
 
     // -- patch name (whatever is left in the middle) -----------------------
-    if (area.width > 60.0f) {
+    if (area.width > t.scaled(60.0f)) {
         const std::string title = patchName_ + (modified_ ? " *" : "");
         ui.draw().addTextClipped(ui.font(t.fontUi), area, modified_ ? t.control : t.textDim,
                                  title, DrawList::Align::Centre);
@@ -1673,12 +1740,12 @@ void StatusBar::render(Ui& ui, const Rect& bounds, const std::string& deviceDesc
     ui.draw().addRectFilled(Rect{ bounds.left(), bounds.top(), bounds.width, 1.0f }, t.border);
 
     Rect area = bounds.deflated(t.smallPadding);
-    area.removeFromLeft(4.0f);
+    area.removeFromLeft(t.scaled(4.0f));
 
     const EngineStats stats = engine_->stats();
 
     // CPU first: it is the number that decides whether a set survives.
-    const Rect cpuArea = area.removeFromLeft(150.0f);
+    const Rect cpuArea = area.removeFromLeft(t.scaled(150.0f));
     const float load = clampValue(stats.cpuLoad, 0.0f, 1.0f);
     const Colour loadColour = load > 0.85f ? t.danger : (load > 0.6f ? t.warning : t.textDim);
 
@@ -1690,7 +1757,7 @@ void StatusBar::render(Ui& ui, const Rect& bounds, const std::string& deviceDesc
     char cpuText[64];
     std::snprintf(cpuText, sizeof(cpuText), "%3.0f%% dsp", static_cast<double>(load * 100.0f));
     Rect cpuTextArea = cpuArea;
-    cpuTextArea.removeFromLeft(58.0f);
+    cpuTextArea.removeFromLeft(t.scaled(58.0f));
     ui.draw().addTextClipped(ui.font(t.fontSmall), cpuTextArea, loadColour, cpuText);
 
     if (ui.hovering(cpuArea)) {
@@ -1700,19 +1767,19 @@ void StatusBar::render(Ui& ui, const Rect& bounds, const std::string& deviceDesc
         ui.setTooltip(detail);
     }
 
-    ui.separator(area.removeFromLeft(1.0f), true);
-    area.removeFromLeft(8.0f);
+    ui.separator(area.removeFromLeft(t.scaled(1.0f)), true);
+    area.removeFromLeft(t.scaled(8.0f));
 
     // Graph shape.
     char graphText[128];
     std::snprintf(graphText, sizeof(graphText), "%d nodes", stats.nodeCount);
-    ui.draw().addTextClipped(ui.font(t.fontSmall), area.removeFromLeft(72.0f), t.textFaint, graphText);
+    ui.draw().addTextClipped(ui.font(t.fontSmall), area.removeFromLeft(t.scaled(72.0f)), t.textFaint, graphText);
 
     if (stats.feedbackEdges > 0) {
         char feedbackText[96];
         std::snprintf(feedbackText, sizeof(feedbackText), "%d feedback %s", stats.feedbackEdges,
                       stats.feedbackEdges == 1 ? "edge" : "edges");
-        ui.draw().addTextClipped(ui.font(t.fontSmall), area.removeFromLeft(120.0f),
+        ui.draw().addTextClipped(ui.font(t.fontSmall), area.removeFromLeft(t.scaled(120.0f)),
                                  t.cableFeedback, feedbackText);
         if (ui.hovering(area)) ui.setTooltip("Feedback edges add one block of latency each");
     }
@@ -1720,7 +1787,7 @@ void StatusBar::render(Ui& ui, const Rect& bounds, const std::string& deviceDesc
     if (stats.xruns > 0) {
         char xrunText[64];
         std::snprintf(xrunText, sizeof(xrunText), "%d drop-outs", stats.xruns);
-        ui.draw().addTextClipped(ui.font(t.fontSmall), area.removeFromLeft(110.0f),
+        ui.draw().addTextClipped(ui.font(t.fontSmall), area.removeFromLeft(t.scaled(110.0f)),
                                  t.danger, xrunText);
     }
 
@@ -1729,7 +1796,7 @@ void StatusBar::render(Ui& ui, const Rect& bounds, const std::string& deviceDesc
         const std::size_t count = plugins_->plugins().size();
         char pluginText[64];
         std::snprintf(pluginText, sizeof(pluginText), "%zu plugins", count);
-        ui.draw().addTextClipped(ui.font(t.fontSmall), area.removeFromRight(96.0f),
+        ui.draw().addTextClipped(ui.font(t.fontSmall), area.removeFromRight(t.scaled(96.0f)),
                                  t.textFaint, pluginText, DrawList::Align::Right);
     }
 

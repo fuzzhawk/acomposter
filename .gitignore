@@ -20,3 +20,6 @@ CMakeUserPresets.json
 
 *.acp.bak
 scan-cache.json
+
+# Scratch written by the test suite.
+acomposter-test-tmp/

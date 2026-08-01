@@ -72,6 +72,30 @@ public:
     // against. Zero when nothing is loaded.
     double songLengthBars(double bpm, int beatsPerBar) const;
 
+    // -- snippet -----------------------------------------------------------
+    // A range dragged out on a stem's spectral strip, to be handed to the build
+    // generator. Held here rather than on the build node because it is selected
+    // in context - against the waveform of the stem it comes from - and because
+    // one selection can be sent to several places.
+    struct Snippet {
+        int slot = -1;
+        double startSeconds = 0.0;
+        double lengthSeconds = 0.0;
+        // Rounded to a whole number of beats at the stem tempo. A grain cloud
+        // built from a loop that is not a loop drifts against everything else.
+        bool tempoMatched = true;
+
+        bool valid() const noexcept { return slot >= 0 && lengthSeconds > 0.0; }
+    };
+
+    const Snippet& snippet() const noexcept { return snippet_; }
+    void setSnippet(const Snippet& snippet);
+    void clearSnippet() { snippet_ = Snippet{}; }
+
+    // The selection as audio, copied out so whoever receives it owns it and can
+    // read it on the audio thread without reaching back into this node.
+    std::shared_ptr<SampleBuffer> extractSnippet(int beatsPerBar) const;
+
     // -- routing -----------------------------------------------------------
     // Which output a stem lands on. Several stems can share one, which is the
     // point: a tag is a category, and a category is a bus.
@@ -206,6 +230,7 @@ private:
     // Message-thread routing state, published to the audio thread as a plain
     // array of ints - small enough that a torn read cannot do worse than send
     // one block of one stem to the wrong bus.
+    Snippet snippet_;
     std::array<std::string, kMaxStems> stemTag_;
     std::array<int, kMaxStems> routeOverride_{};
     std::array<std::atomic<int>, kMaxStems> resolvedRoute_{};

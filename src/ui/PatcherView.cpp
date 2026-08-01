@@ -24,6 +24,16 @@ constexpr float kPortInset = 0.0f;
 constexpr float kResizeHandleWidth = 8.0f;
 constexpr float kGridSpacing = 24.0f;
 
+// The canvas keeps its own copies of the four metrics it needs, because it is
+// the one place in the app that works in design units rather than device
+// pixels: everything here is multiplied by viewScale() on the way to the
+// screen, and the theme's metrics have already had the display scale folded in.
+// Reading them here would apply it twice.
+constexpr float kHeaderHeight = 24.0f;
+constexpr float kPortRadius = 5.0f;
+constexpr float kCableThickness = 2.0f;
+constexpr float kNodeMinWidth = 168.0f;
+
 // How far a cable's control points reach horizontally. Proportional to the
 // span, so short hops stay tight and long runs sweep.
 float cableTension(Vec2 from, Vec2 to) {
@@ -74,14 +84,20 @@ void PatcherView::initialise(Engine* engine, Metasurface* metasurface,
     plugins_ = plugins;
 }
 
+float PatcherView::viewScale() const noexcept {
+    return zoom_ * theme().scale;
+}
+
 Vec2 PatcherView::screenToWorld(Vec2 screen, const Rect& bounds) const {
-    return { (screen.x - bounds.left()) / zoom_ - pan_.x,
-             (screen.y - bounds.top()) / zoom_ - pan_.y };
+    const float z = viewScale();
+    return { (screen.x - bounds.left()) / z - pan_.x,
+             (screen.y - bounds.top()) / z - pan_.y };
 }
 
 Vec2 PatcherView::worldToScreen(Vec2 world, const Rect& bounds) const {
-    return { (world.x + pan_.x) * zoom_ + bounds.left(),
-             (world.y + pan_.y) * zoom_ + bounds.top() };
+    const float z = viewScale();
+    return { (world.x + pan_.x) * z + bounds.left(),
+             (world.y + pan_.y) * z + bounds.top() };
 }
 
 void PatcherView::resetView() {
@@ -104,13 +120,16 @@ void PatcherView::frameAll(const Rect& bounds) {
     const float contentHeight = std::max(1.0f, maxY - minY);
     const float margin = 60.0f;
 
-    zoom_ = clampValue(std::min((bounds.width - margin) / contentWidth,
-                                (bounds.height - margin) / contentHeight),
-                       kMinZoom, 1.0f);
+    // The fit is a screen measurement, so it produces a view scale; the zoom the
+    // user sees and saves is that with the display scale divided back out.
+    const float fitted = std::min((bounds.width - margin) / contentWidth,
+                                  (bounds.height - margin) / contentHeight);
+    zoom_ = clampValue(fitted / std::max(0.01f, theme().scale), kMinZoom, 1.0f);
 
     // Centre the content in the view.
-    pan_ = { (bounds.width / zoom_ - contentWidth) * 0.5f - minX,
-             (bounds.height / zoom_ - contentHeight) * 0.5f - minY };
+    const float z = viewScale();
+    pan_ = { (bounds.width / z - contentWidth) * 0.5f - minX,
+             (bounds.height / z - contentHeight) * 0.5f - minY };
 }
 
 // ---------------------------------------------------------------------------
@@ -129,18 +148,17 @@ float PatcherView::nodeWidth(const Node& node) const {
         return stems.matrixOpen ? 460.0f + 250.0f : 460.0f;
     }
     if (node.typeName() == "color") return 260.0f;
-    if (node.typeName() == "build") return 250.0f;
+    if (node.typeName() == "build") return 320.0f;
     if (node.typeName().rfind("mixer.", 0) == 0) {
         const auto* mixer = static_cast<const MixerNode*>(&node);
         return clampValue(46.0f * static_cast<float>(mixer->channelCount()) + 20.0f, 180.0f, 780.0f);
     }
     if (node.typeName() == vst2::VstNode::kTypeName) return 220.0f;
-    return theme().nodeMinWidth;
+    return kNodeMinWidth;
 }
 
 float PatcherView::nodeHeight(const Node& node) const {
-    const Theme& t = theme();
-    if (node.collapsed) return t.nodeHeaderHeight;
+    if (node.collapsed) return kHeaderHeight;
 
     // Tall enough for the ports, whatever the body wants.
     const float portHeight = static_cast<float>(std::max(node.numInputs(), node.numOutputs()))
@@ -152,7 +170,7 @@ float PatcherView::nodeHeight(const Node& node) const {
     if (type == "sample.player") bodyHeight = 128.0f;
     else if (type == "stem.player") bodyHeight = 360.0f;
     else if (type == "color") bodyHeight = 132.0f;
-    else if (type == "build") bodyHeight = 208.0f;
+    else if (type == "build") bodyHeight = 292.0f;
     else if (type == "looper") bodyHeight = 116.0f;
     else if (type == "crossfader") bodyHeight = 92.0f;
     else if (type.rfind("mixer.", 0) == 0) bodyHeight = 132.0f;
@@ -169,25 +187,26 @@ float PatcherView::nodeHeight(const Node& node) const {
 
     if (!node.errorText().empty()) bodyHeight += 18.0f;
 
-    return t.nodeHeaderHeight + std::max(bodyHeight, portHeight + 8.0f);
+    return kHeaderHeight + std::max(bodyHeight, portHeight + 8.0f);
 }
 
 Rect PatcherView::nodeBounds(const Node& node, const Rect& viewBounds) const {
+    const float z = viewScale();
     const Vec2 topLeft = worldToScreen({ node.canvasX, node.canvasY }, viewBounds);
-    return Rect{ topLeft.x, topLeft.y, nodeWidth(node) * zoom_, nodeHeight(node) * zoom_ };
+    return Rect{ topLeft.x, topLeft.y, nodeWidth(node) * z, nodeHeight(node) * z };
 }
 
 Vec2 PatcherView::portPosition(const Node& node, PortIndex port, bool isInput,
                                const Rect& viewBounds) const {
+    const float z = viewScale();
     const Rect bounds = nodeBounds(node, viewBounds);
-    const Theme& t = theme();
 
     const int count = isInput ? node.numInputs() : node.numOutputs();
     if (count <= 0) return bounds.centre();
 
     // Ports are distributed down the body, below the header.
-    const float top = bounds.top() + t.nodeHeaderHeight * zoom_;
-    const float available = std::max(bounds.height - t.nodeHeaderHeight * zoom_, 1.0f);
+    const float top = bounds.top() + kHeaderHeight * z;
+    const float available = std::max(bounds.height - kHeaderHeight * z, 1.0f);
     const float step = available / static_cast<float>(count + 1);
     const float y = top + step * static_cast<float>(port + 1);
 
@@ -213,12 +232,13 @@ NodeId PatcherView::hitTestNodes(Ui& ui, const Rect& viewBounds) const {
 }
 
 PatcherView::PortHit PatcherView::hitTestPorts(Ui& ui, const Rect& viewBounds) const {
+    const float z = viewScale();
     if (!engine_) return {};
 
     const Vec2 pointer = ui.input().mousePosition;
     // A generous radius: ports are small, and missing one mid-performance is
     // more annoying than occasionally grabbing the wrong one.
-    const float radius = std::max(9.0f, theme().portRadius * zoom_ * 1.8f);
+    const float radius = std::max(9.0f, kPortRadius * z * 1.8f);
 
     for (const auto& node : engine_->graph().nodes()) {
         for (int p = 0; p < node->numInputs(); ++p) {
@@ -553,6 +573,7 @@ void PatcherView::tidyStemChains(NodeId stemPlayer) {
 
 bool PatcherView::handleFileDrop(const std::string& utf8Path, Vec2 screenPosition,
                                  const Rect& bounds) {
+    const float z = viewScale();
     if (!engine_ || !audiofile::isSupportedFile(utf8Path)) return false;
 
     // Dropping onto an existing sample player replaces its file; dropping on
@@ -574,7 +595,7 @@ bool PatcherView::handleFileDrop(const std::string& utf8Path, Vec2 screenPositio
         if (node->typeName() == "stem.player") {
             auto* player = static_cast<StemPlayerNode*>(node.get());
 
-            const float scale = zoom_;
+            const float scale = z;
             const float bodyTop = box.top() + theme().nodeHeaderHeight * scale;
             // Section grid, launch row, tempo row and the gaps above the
             // strips. Kept in one expression so it is obvious this has to move
@@ -616,18 +637,19 @@ bool PatcherView::handleFileDrop(const std::string& utf8Path, Vec2 screenPositio
 // ---------------------------------------------------------------------------
 
 void PatcherView::drawGrid(Ui& ui, const Rect& bounds) const {
+    const float z = viewScale();
     const Theme& t = theme();
     DrawList& list = ui.draw();
 
     list.addRectFilled(bounds, t.canvas);
 
-    const float spacing = kGridSpacing * zoom_;
+    const float spacing = kGridSpacing * z;
     if (spacing < 6.0f) return;   // too dense to be anything but noise
 
     // Every fourth line is brighter, which gives the eye something to measure
     // distance against when the canvas is otherwise empty.
-    const float originX = std::fmod(pan_.x * zoom_, spacing * 4.0f);
-    const float originY = std::fmod(pan_.y * zoom_, spacing * 4.0f);
+    const float originX = std::fmod(pan_.x * z, spacing * 4.0f);
+    const float originY = std::fmod(pan_.y * z, spacing * 4.0f);
 
     int index = 0;
     for (float x = bounds.left() + originX - spacing * 4.0f; x < bounds.right(); x += spacing, ++index) {
@@ -647,6 +669,7 @@ void PatcherView::drawGrid(Ui& ui, const Rect& bounds) const {
 }
 
 void PatcherView::drawCables(Ui& ui, const Rect& bounds) {
+    const float z = viewScale();
     if (!engine_) return;
 
     const Theme& t = theme();
@@ -671,7 +694,7 @@ void PatcherView::drawCables(Ui& ui, const Rect& bounds) {
                                    || isSelected(connection.destNode);
 
         Colour colour = feedback ? t.cableFeedback : t.categoryColour(source->category());
-        float thickness = t.cableThickness * zoom_;
+        float thickness = kCableThickness * z;
 
         if (hovered) { colour = t.cableHover; thickness *= 1.6f; }
         else if (endpointSelected) colour = colour.brightened(1.3f);
@@ -690,8 +713,8 @@ void PatcherView::drawCables(Ui& ui, const Rect& bounds) {
             // Feedback edges are worth calling out: they cost a block of latency
             // and the performer should know where they are.
             const Vec2 midpoint{ (from.x + to.x) * 0.5f, (from.y + to.y) * 0.5f };
-            list.addCircleFilled(midpoint, 4.0f * zoom_, t.canvas);
-            list.addCircle(midpoint, 4.0f * zoom_, t.cableFeedback, 1.5f);
+            list.addCircleFilled(midpoint, 4.0f * z, t.canvas);
+            list.addCircle(midpoint, 4.0f * z, t.cableFeedback, 1.5f);
         }
     }
 
@@ -709,13 +732,14 @@ void PatcherView::drawCables(Ui& ui, const Rect& bounds) {
                                                        : Vec2{ to.x - tension, to.y };
 
             list.addBezier(from, control1, control2, to, t.accent.withAlpha(0.9f),
-                           t.cableThickness * zoom_ * 1.2f);
+                           kCableThickness * z * 1.2f);
             list.addCircleFilled(to, 4.0f, t.accent);
         }
     }
 }
 
 void PatcherView::drawNode(Ui& ui, Node& node, const Rect& bounds) {
+    const float z = viewScale();
     const Theme& t = theme();
     DrawList& list = ui.draw();
 
@@ -736,12 +760,12 @@ void PatcherView::drawNode(Ui& ui, Node& node, const Rect& bounds) {
 
     list.addRectFilled(rect, bypassed ? t.panel.withAlpha(0.7f) : t.panelRaised, t.cornerRadiusLarge);
 
-    const Rect header{ rect.left(), rect.top(), rect.width, t.nodeHeaderHeight * zoom_ };
+    const Rect header{ rect.left(), rect.top(), rect.width, kHeaderHeight * z };
     list.addRectFilledGradient(header, accent.withAlpha(bypassed ? 0.12f : 0.30f),
                                accent.withAlpha(bypassed ? 0.04f : 0.10f),
                                t.cornerRadiusLarge, gfx::Corners::Top);
     // A solid stripe down the left edge is the fastest category read at a glance.
-    list.addRectFilled(Rect{ rect.left(), rect.top(), 3.0f * zoom_, rect.height },
+    list.addRectFilled(Rect{ rect.left(), rect.top(), 3.0f * z, rect.height },
                        accent.withAlpha(bypassed ? 0.3f : 0.9f),
                        t.cornerRadiusLarge, gfx::Corners::Left);
 
@@ -749,13 +773,13 @@ void PatcherView::drawNode(Ui& ui, Node& node, const Rect& bounds) {
                  selected ? 1.6f : t.borderWidth, t.cornerRadiusLarge);
 
     // -- header content ----------------------------------------------------
-    Rect headerContent = header.deflated(6.0f * zoom_);
-    headerContent.removeFromLeft(4.0f * zoom_);
+    Rect headerContent = header.deflated(6.0f * z);
+    headerContent.removeFromLeft(4.0f * z);
 
-    const Rect collapseArea = headerContent.removeFromRight(16.0f * zoom_);
-    const Rect bypassArea = headerContent.removeFromRight(18.0f * zoom_);
+    const Rect collapseArea = headerContent.removeFromRight(16.0f * z);
+    const Rect bypassArea = headerContent.removeFromRight(18.0f * z);
 
-    if (zoom_ > 0.55f) {
+    if (z > 0.55f) {
         if (ui.iconButton(ui.idFrom(&node, 900), collapseArea, Ui::Icon::Chevron,
                           node.collapsed ? t.textDim : t.textFaint))
             node.collapsed = !node.collapsed;
@@ -790,12 +814,12 @@ void PatcherView::drawNode(Ui& ui, Node& node, const Rect& bounds) {
     if (node.collapsed) return;
 
     // -- body --------------------------------------------------------------
-    Rect body{ rect.left() + 6.0f * zoom_, header.bottom() + 2.0f * zoom_,
-               rect.width - 12.0f * zoom_,
-               rect.bottom() - header.bottom() - 6.0f * zoom_ };
+    Rect body{ rect.left() + 6.0f * z, header.bottom() + 2.0f * z,
+               rect.width - 12.0f * z,
+               rect.bottom() - header.bottom() - 6.0f * z };
 
     if (!node.errorText().empty()) {
-        const Rect errorRow = body.removeFromBottom(16.0f * zoom_);
+        const Rect errorRow = body.removeFromBottom(16.0f * z);
         list.addRectFilled(errorRow, t.danger.withAlpha(0.12f), 2.0f);
         list.addTextClipped(ui.font(t.fontSmall), errorRow.deflated(3.0f), t.danger,
                             node.errorText());
@@ -804,7 +828,7 @@ void PatcherView::drawNode(Ui& ui, Node& node, const Rect& bounds) {
 
     // Below this the controls are too small to hit reliably, so the node shows
     // only its identity and its meters.
-    if (zoom_ > 0.62f && body.height > 12.0f) {
+    if (z > 0.62f && body.height > 12.0f) {
         // Clipped to the node. Body layouts are authored in unscaled units and
         // scaled by bodyScale(); rounding and text that cannot shrink below its
         // atlas size mean the last row can still overhang by a pixel or two, and
@@ -824,7 +848,7 @@ void PatcherView::drawNode(Ui& ui, Node& node, const Rect& bounds) {
             return false;
         }();
 
-        const float radius = t.portRadius * zoom_;
+        const float radius = kPortRadius * z;
         list.addCircleFilled(position, radius, connected ? accent : t.panelSunken);
         list.addCircle(position, radius, connected ? accent.brightened(1.2f) : t.borderStrong, 1.4f);
 
@@ -843,7 +867,7 @@ void PatcherView::drawNode(Ui& ui, Node& node, const Rect& bounds) {
             return false;
         }();
 
-        const float radius = t.portRadius * zoom_;
+        const float radius = kPortRadius * z;
         list.addCircleFilled(position, radius, connected ? accent : t.panelSunken);
         list.addCircle(position, radius, connected ? accent.brightened(1.2f) : t.borderStrong, 1.4f);
 
@@ -1411,6 +1435,47 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
             }
         }
 
+        // -- snippet selection -----------------------------------------------
+        // Shift-drag along a strip marks the range to hand to the build
+        // generator. Done here rather than in a dialog because the only way to
+        // pick a useful grain source is against the picture of the sound.
+        if (loaded && songSeconds > 0.0) {
+            const UiId snipId = ui.idFrom(&node, 1500 + slot);
+            bool snipHovered = false, snipHeld = false;
+            ui.buttonBehaviour(snipId, strip, snipHovered, snipHeld);
+
+            if (ui.isActive(snipId) && ui.input().shift) {
+                const float a = clampValue((ui.dragStart().x - strip.left())
+                                               / std::max(1.0f, strip.width), 0.0f, 1.0f);
+                const float b = clampValue((ui.input().mousePosition.x - strip.left())
+                                               / std::max(1.0f, strip.width), 0.0f, 1.0f);
+
+                StemPlayerNode::Snippet snip;
+                snip.slot = slot;
+                snip.startSeconds = std::min(a, b) * songSeconds;
+                snip.lengthSeconds = std::abs(b - a) * songSeconds;
+                snip.tempoMatched = !ui.input().alt;   // alt gives a free-form range
+                stems.setSnippet(snip);
+            }
+            if (snipHovered && ui.input().shift)
+                ui.setCursor(Cursor::ResizeHorizontal);
+        }
+
+        // The current selection, drawn on whichever strip it came from.
+        if (stems.snippet().slot == slot && stems.snippet().lengthSeconds > 0.0
+            && songSeconds > 0.0) {
+            const float x0 = strip.left()
+                + strip.width * static_cast<float>(stems.snippet().startSeconds / songSeconds);
+            const float x1 = strip.left()
+                + strip.width * static_cast<float>((stems.snippet().startSeconds
+                                                    + stems.snippet().lengthSeconds) / songSeconds);
+
+            list.addRectFilled(Rect{ x0, strip.top(), std::max(2.0f, x1 - x0), strip.height },
+                               t.warning.withAlpha(0.28f));
+            list.addRect(Rect{ x0, strip.top(), std::max(2.0f, x1 - x0), strip.height },
+                         t.warning, 1.0f, 0.0f);
+        }
+
         // -- playhead --------------------------------------------------------
         // One per stem, because a stem the build node is chopping is
         // deliberately not where the others are. Seeing them separate is how
@@ -1655,36 +1720,157 @@ void PatcherView::drawBuildBody(Ui& ui, Node& node, const Rect& body) {
     // eight bars, on this curve. Cycling controls rather than dropdowns - the
     // menu a combo opens falls outside the node and has to be aimed at while
     // the set is running, which is the wrong ask of a performance control.
-    Rect chopRow = area.removeFromTop(s * 19.0f);
-    list.addTextClipped(ui.font(t.fontSmall), chopRow.removeFromLeft(s * 34.0f),
-                        t.textFaint, "chop");
-    ui.parameterCycle(chopRow.removeFromLeft(chopRow.width * 0.44f),
+    // One caption column down the left, so the three rows read as three lines of
+    // one sentence. The controls themselves show only their value: the caption
+    // has already said what they are, and repeating "Build Length" inside a
+    // slider that is forty pixels wide only costs the number its room.
+    const float caption = s * 36.0f;
+    const float rowHeight = s * 20.0f;
+    const float gap = s * 5.0f;
+
+    auto captionise = [&](Rect& row, const char* text) {
+        list.addTextClipped(ui.font(t.fontSmall), row.removeFromLeft(caption),
+                            t.textFaint, text);
+    };
+
+    Rect chopRow = area.removeFromTop(rowHeight);
+    captionise(chopRow, "chop");
+    ui.parameterCycle(chopRow.removeFromLeft(chopRow.width * 0.42f),
                       node.parameter(node.indexOfParameter("startDivide")), t.control);
-    list.addTextClipped(ui.font(t.fontSmall), chopRow.removeFromLeft(s * 20.0f),
+    list.addTextClipped(ui.font(t.fontSmall), chopRow.removeFromLeft(s * 18.0f),
                         t.textFaint, "to", DrawList::Align::Centre);
     ui.parameterCycle(chopRow, node.parameter(node.indexOfParameter("endDivide")), t.danger);
 
-    area.removeFromTop(s * 4.0f);
+    area.removeFromTop(gap);
 
-    Rect shapeRow = area.removeFromTop(s * 19.0f);
-    list.addTextClipped(ui.font(t.fontSmall), shapeRow.removeFromLeft(s * 34.0f),
-                        t.textFaint, "over");
-    ui.parameterSlider(shapeRow.removeFromLeft(shapeRow.width * 0.44f),
-                       node.parameter(node.indexOfParameter("bars")), t.control);
+    Rect shapeRow = area.removeFromTop(rowHeight);
+    captionise(shapeRow, "over");
+    ui.parameterSlider(shapeRow.removeFromLeft(shapeRow.width * 0.42f),
+                       node.parameter(node.indexOfParameter("bars")), t.control, false);
     shapeRow.removeFromLeft(s * 6.0f);
     ui.parameterCycle(shapeRow, node.parameter(node.indexOfParameter("curve")), t.accent);
 
-    area.removeFromTop(s * 4.0f);
+    area.removeFromTop(gap);
 
-    Rect releaseRow = area.removeFromTop(s * 19.0f);
-    list.addTextClipped(ui.font(t.fontSmall), releaseRow.removeFromLeft(s * 34.0f),
-                        t.textFaint, "drop");
-    ui.parameterCycle(releaseRow.removeFromLeft(releaseRow.width * 0.44f),
+    Rect releaseRow = area.removeFromTop(rowHeight);
+    captionise(releaseRow, "drop");
+    ui.parameterCycle(releaseRow.removeFromLeft(releaseRow.width * 0.52f),
                       node.parameter(node.indexOfParameter("release")), t.accent);
     releaseRow.removeFromLeft(s * 6.0f);
-    ui.parameterSlider(releaseRow, node.parameter(node.indexOfParameter("colorPush")), t.accentDim);
+    ui.parameterSlider(releaseRow, node.parameter(node.indexOfParameter("colorPush")),
+                       t.accentDim, false);
 
     area.removeFromTop(s * 5.0f);
+
+    // -- the snippet -------------------------------------------------------
+    // The range dragged out on a stem strip, drawn big enough to trim exactly.
+    // The selection is made in context against the sound; this is where it is
+    // made precise.
+    if (area.height >= s * 60.0f) {
+        Rect snippetArea = area.removeFromTop(s * 46.0f);
+        list.addRectFilled(snippetArea, t.panelSunken, 2.0f);
+        list.addRect(snippetArea, t.border, 1.0f, 2.0f);
+
+        const auto snippet = build.snippet();
+        if (!snippet || snippet->empty()) {
+            list.addTextClipped(ui.font(t.fontSmall), snippetArea, t.textFaint,
+                                "shift-drag a stem strip, then send it here",
+                                DrawList::Align::Centre);
+        } else {
+            Rect plot = snippetArea.deflated(s * 3.0f);
+
+            const auto& overview = snippet->overview();
+            if (!overview.minimum.empty()) {
+                const float centreY = plot.centre().y;
+                const float half = plot.height * 0.44f;
+                const int columns = static_cast<int>(plot.width);
+
+                for (int x = 0; x < columns; ++x) {
+                    const std::size_t index = static_cast<std::size_t>(
+                        static_cast<float>(x) / static_cast<float>(std::max(1, columns))
+                        * static_cast<float>(overview.minimum.size()));
+                    if (index >= overview.minimum.size()) break;
+
+                    const float low = overview.minimum[index];
+                    const float high = overview.maximum[index];
+                    list.addRectFilled(Rect{ plot.left() + static_cast<float>(x),
+                                             centreY - high * half, 1.0f,
+                                             std::max(1.0f, (high - low) * half) },
+                                       t.warning.withAlpha(0.7f));
+                }
+            }
+
+            // The trimmed-away ends are dimmed rather than hidden, so what is
+            // being excluded stays visible while it is being chosen.
+            const float x0 = plot.left() + plot.width * build.trimStart();
+            const float x1 = plot.left() + plot.width * build.trimEnd();
+
+            list.addRectFilled(Rect{ plot.left(), plot.top(), x0 - plot.left(), plot.height },
+                               t.background.withAlpha(0.72f));
+            list.addRectFilled(Rect{ x1, plot.top(), plot.right() - x1, plot.height },
+                               t.background.withAlpha(0.72f));
+
+            // Two handles, dragged independently.
+            for (int handle = 0; handle < 2; ++handle) {
+                const float x = handle == 0 ? x0 : x1;
+                const Rect grip{ x - s * 4.0f, plot.top(), s * 8.0f, plot.height };
+
+                bool gripHovered = false, gripHeld = false;
+                const UiId gripId = ui.idFrom(&node, 660 + handle);
+                ui.buttonBehaviour(gripId, grip, gripHovered, gripHeld);
+
+                if (ui.isActive(gripId)) {
+                    const float value = clampValue((ui.input().mousePosition.x - plot.left())
+                                                       / std::max(1.0f, plot.width), 0.0f, 1.0f);
+                    if (handle == 0) build.setTrim(value, build.trimEnd());
+                    else build.setTrim(build.trimStart(), value);
+                }
+                if (gripHovered) ui.setCursor(Cursor::ResizeHorizontal);
+
+                list.addRectFilled(Rect{ x - 1.0f, plot.top(), 2.0f, plot.height },
+                                   gripHovered ? t.text : t.warning);
+            }
+
+            char label[128];
+            std::snprintf(label, sizeof(label), "%s  %.2fs",
+                          build.snippetLabel().c_str(),
+                          snippet->durationSeconds()
+                              * static_cast<double>(build.trimEnd() - build.trimStart()));
+            list.addTextClipped(ui.font(t.fontSmall),
+                                Rect{ snippetArea.left() + s * 4.0f, snippetArea.bottom() - s * 12.0f,
+                                      snippetArea.width - s * 8.0f, s * 11.0f },
+                                t.textFaint, label);
+        }
+
+        area.removeFromTop(s * 4.0f);
+
+        // Two per row, each with its own short caption. Four parameter sliders
+        // carrying their full names across half a node's width is how "Spread"
+        // became "Spr..." and "Grains" became "Gr..." - the name outside the
+        // control leaves the whole slider for the number.
+        auto grainPair = [&](const char* leftCaption, const char* leftId,
+                             const char* rightCaption, const char* rightId) {
+            Rect row = area.removeFromTop(s * 18.0f);
+            Rect left = row.removeFromLeft(row.width * 0.5f - s * 3.0f);
+            row.removeFromLeft(s * 6.0f);
+
+            list.addTextClipped(ui.font(t.fontSmall), left.removeFromLeft(s * 30.0f),
+                                t.textFaint, leftCaption);
+            ui.parameterSlider(left, node.parameter(node.indexOfParameter(leftId)),
+                               t.warning, false);
+
+            list.addTextClipped(ui.font(t.fontSmall), row.removeFromLeft(s * 30.0f),
+                                t.textFaint, rightCaption);
+            ui.parameterSlider(row, node.parameter(node.indexOfParameter(rightId)),
+                               t.warning, false);
+        };
+
+        grainPair("size", "grainSize", "dens", "grainDensity");
+        area.removeFromTop(s * 3.0f);
+        grainPair("wide", "grainSpread", "level", "grainGain");
+
+        area.removeFromTop(s * 4.0f);
+    }
 
     // -- which stems get chopped -------------------------------------------
     // Eight little pads named after the stem slots. Chopping everything is a
@@ -1894,6 +2080,7 @@ void PatcherView::drawGenericBody(Ui& ui, Node& node, const Rect& body) {
 // ---------------------------------------------------------------------------
 
 void PatcherView::handleInput(Ui& ui, const Rect& bounds) {
+    const float z = viewScale();
     const InputState& input = ui.input();
     const bool overCanvas = ui.hovering(bounds);
 
@@ -1976,7 +2163,7 @@ void PatcherView::handleInput(Ui& ui, const Rect& bounds) {
     // -- continue interactions --------------------------------------------
     switch (mode_) {
         case CanvasMode::PanningCanvas: {
-            pan_ += input.mouseDelta / zoom_;
+            pan_ += input.mouseDelta / z;
             ui.setCursor(Cursor::Hand);
             if (!input.mouseDown[static_cast<int>(MouseButton::Middle)]
                 && !input.mouseDown[static_cast<int>(MouseButton::Left)])
@@ -2046,7 +2233,7 @@ void PatcherView::handleInput(Ui& ui, const Rect& bounds) {
             if (Node* node = engine_->graph().node(resizingNode_)) {
                 const Vec2 world = screenToWorld(input.mousePosition, bounds);
                 node->canvasWidth = clampValue(resizeStartWidth_ + (world.x - dragStartWorld_.x),
-                                               theme().nodeMinWidth, 900.0f);
+                                               kNodeMinWidth, 900.0f);
             }
             ui.setCursor(Cursor::ResizeHorizontal);
             if (!input.mouseDown[static_cast<int>(MouseButton::Left)]) {

@@ -136,10 +136,19 @@ private:
     bool modified_ = false;
 
     // -- panel sizes -------------------------------------------------------
+    // Held in design units and scaled at the point of use, so a layout saved on
+    // one display opens the same shape on another - and, more immediately, so a
+    // panel is as wide relative to its text on a 150% display as it is at 100%.
+    // Left unscaled, the inspector was 280 physical pixels holding text drawn
+    // half again as large, and every row in it ended in an ellipsis.
     float browserWidth_ = 230.0f;
     float inspectorWidth_ = 280.0f;
     bool showBrowser_ = true;
     bool showInspector_ = true;
+
+    float browserWidthPx() const;
+    float inspectorWidthPx() const;
+    float timelineHeightPx() const;
 
     // Reserved strip along the bottom of the patch view for the arrangement
     // timeline. Nothing draws into it yet beyond its own ruler; it is laid out

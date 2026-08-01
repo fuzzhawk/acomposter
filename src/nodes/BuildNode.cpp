@@ -46,6 +46,28 @@ BuildNode::BuildNode() : Node("build", NodeCategory::Effect) {
     pColorPush_ = indexOfParameter(addFloatParam("colorPush", "Colour Push", -1.0f, 1.0f, 1.0f).id());
     pRiserGain_ = indexOfParameter(addDbParam("riserGain", "Riser", -60.0f, 12.0f, -6.0f).id());
     pKillLow_ = indexOfParameter(addBoolParam("killLow", "Drop the Low End", true).id());
+
+    // -- granular ----------------------------------------------------------
+    // Grain size in milliseconds rather than samples: the musical question is
+    // "how long is a grain", and the answer is in time, not in frames.
+    pGrainSize_ = indexOfParameter(addFloatParam("grainSize", "Grain", 5.0f, 400.0f, 60.0f).id());
+    parameter(pGrainSize_).setUnit("ms").setSkewForCentre(60.0f);
+
+    pGrainDensity_ = indexOfParameter(
+        addFloatParam("grainDensity", "Density", 1.0f, 120.0f, 18.0f).id());
+    parameter(pGrainDensity_).setUnit("/s").setSkewForCentre(20.0f);
+
+    pGrainPitch_ = indexOfParameter(addFloatParam("grainPitch", "Pitch", -24.0f, 24.0f, 0.0f).id());
+    parameter(pGrainPitch_).setUnit("st");
+
+    // How far through the snippet the cloud reads, and how far it scatters.
+    pGrainSpread_ = indexOfParameter(addFloatParam("grainSpread", "Spread", 0.0f, 1.0f, 0.25f).id());
+    pGrainGain_ = indexOfParameter(addDbParam("grainGain", "Grains", -60.0f, 12.0f, -60.0f).id());
+
+    // What the build does to the cloud as it climbs: at 1 the grains get
+    // shorter, denser and higher across the build, which is the sound of a
+    // stutter tightening into a whine.
+    pGrainRamp_ = indexOfParameter(addFloatParam("grainRamp", "Grain Ramp", 0.0f, 1.0f, 1.0f).id());
 }
 
 // ---------------------------------------------------------------------------
@@ -73,6 +95,134 @@ void BuildNode::clearRiser() {
 }
 
 // ---------------------------------------------------------------------------
+// Granular
+// ---------------------------------------------------------------------------
+
+void BuildNode::setSnippet(std::shared_ptr<SampleBuffer> snippet, std::string label) {
+    if (!snippet || snippet->empty()) { clearSnippet(); return; }
+
+    snippet_.publish(std::move(snippet));
+    snippetLabel_ = std::move(label);
+    setTrim(0.0f, 1.0f);
+}
+
+void BuildNode::clearSnippet() {
+    snippet_.clear();
+    snippetLabel_.clear();
+    setTrim(0.0f, 1.0f);
+}
+
+void BuildNode::setTrim(float start, float end) noexcept {
+    trimStart_ = clampValue(start, 0.0f, 1.0f);
+    trimEnd_ = clampValue(end, 0.0f, 1.0f);
+    // A zero-length or inverted trim would leave the grain scheduler with no
+    // window to pick positions from, so the two are kept apart by a hair. Which
+    // one moves depends on which end has room: pushing the end forward does
+    // nothing when the start is already at the top.
+    constexpr float kMinimumWindow = 0.01f;
+    if (trimEnd_ - trimStart_ < kMinimumWindow) {
+        if (trimStart_ + kMinimumWindow <= 1.0f) trimEnd_ = trimStart_ + kMinimumWindow;
+        else { trimEnd_ = 1.0f; trimStart_ = 1.0f - kMinimumWindow; }
+    }
+
+    trimStartAtomic_.store(trimStart_, std::memory_order_relaxed);
+    trimEndAtomic_.store(trimEnd_, std::memory_order_relaxed);
+}
+
+float BuildNode::nextRandom() noexcept {
+    // xorshift: the grain cloud needs scatter, not statistical rigour, and this
+    // costs nothing on the audio thread.
+    grainRandom_ ^= grainRandom_ << 13;
+    grainRandom_ ^= grainRandom_ >> 17;
+    grainRandom_ ^= grainRandom_ << 5;
+    return static_cast<float>(grainRandom_ & 0xFFFFFF) / static_cast<float>(0xFFFFFF);
+}
+
+void BuildNode::renderGrains(AudioBus& out, int frames, float shaped, double sampleRate) noexcept {
+    const SampleBuffer* source = snippet_.get();
+    if (source == nullptr || source->empty()) return;
+
+    const float gain = dsp::dbToGain(paramValue(pGrainGain_));
+    if (gain <= 0.0f) return;
+
+    const float ramp = paramValue(pGrainRamp_) * shaped;
+
+    // The ramp shortens and tightens the cloud as the build climbs.
+    const double sizeMs = static_cast<double>(paramValue(pGrainSize_)) * (1.0 - 0.75 * ramp);
+    const double density = static_cast<double>(paramValue(pGrainDensity_)) * (1.0 + 5.0 * ramp);
+    const double semitones = static_cast<double>(paramValue(pGrainPitch_)) + 12.0 * ramp;
+    const float spread = paramValue(pGrainSpread_);
+
+    const double rateRatio = source->sampleRate() / sampleRate;
+    const double increment = rateRatio * std::pow(2.0, semitones / 12.0);
+    const int grainLength = std::max(8, static_cast<int>(sizeMs * 0.001 * sampleRate));
+    const double interval = sampleRate / std::max(1.0, density);
+
+    const float trimStart = trimStartAtomic_.load(std::memory_order_relaxed);
+    const float trimEnd = trimEndAtomic_.load(std::memory_order_relaxed);
+    const double windowStart = static_cast<double>(source->frames()) * trimStart;
+    const double windowLength = static_cast<double>(source->frames()) * (trimEnd - trimStart);
+    if (windowLength <= 1.0) return;
+
+    for (int i = 0; i < frames; ++i) {
+        // -- schedule ------------------------------------------------------
+        grainClock_ += 1.0;
+        if (grainClock_ >= interval) {
+            grainClock_ -= interval;
+
+            for (Grain& grain : grains_) {
+                if (grain.active) continue;
+
+                grain.active = true;
+                grain.length = grainLength;
+                grain.remaining = grainLength;
+                grain.increment = increment;
+                grain.pan = nextRandom();
+
+                // Scatter within the trimmed window. At zero spread every grain
+                // starts at the same place, which is the stutter; at one they
+                // are anywhere in it, which is the cloud.
+                const double offset = static_cast<double>(nextRandom()) * spread * windowLength;
+                grain.position = windowStart + offset;
+                break;
+            }
+        }
+
+        // -- render --------------------------------------------------------
+        float left = 0.0f, right = 0.0f;
+
+        for (Grain& grain : grains_) {
+            if (!grain.active) continue;
+
+            const std::int64_t index = static_cast<std::int64_t>(grain.position);
+            if (index < 0 || index >= source->frames() - 1) { grain.active = false; continue; }
+
+            // Raised cosine, so grains fade in and out rather than clicking -
+            // at these lengths a hard edge is most of what you would hear.
+            const float phase = 1.0f - static_cast<float>(grain.remaining)
+                                     / static_cast<float>(std::max(1, grain.length));
+            const float window = 0.5f - 0.5f * std::cos(phase * 2.0f * 3.14159265358979f);
+
+            const float fraction = static_cast<float>(grain.position - static_cast<double>(index));
+            const float* data = source->channel(0);
+            const float value = (data[index] + (data[index + 1] - data[index]) * fraction) * window;
+
+            left += value * (1.0f - grain.pan);
+            right += value * grain.pan;
+
+            grain.position += grain.increment;
+            if (--grain.remaining <= 0) grain.active = false;
+        }
+
+        // Equal-ish power against the number of voices, so a dense cloud does
+        // not simply get louder than a sparse one.
+        const float normalise = gain * 0.35f;
+        if (out.numChannels > 0) out.chan(0)[i] += left * normalise;
+        if (out.numChannels > 1) out.chan(1)[i] += right * normalise;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Performance
 // ---------------------------------------------------------------------------
 
@@ -83,6 +233,7 @@ void BuildNode::setEngaged(bool engage) noexcept {
 void BuildNode::prepare(const PrepareInfo& info) {
     Node::prepare(info);
     riser_.setClock(info.blockCounter);
+    snippet_.setClock(info.blockCounter);
     riserGain_.reset(info.sampleRate, 0.01);
     reset();
 }
@@ -184,6 +335,12 @@ void BuildNode::process(ProcessContext& ctx) {
         }
     }
 
+    // The cloud only runs while the build does, and its shape follows the same
+    // curve the loop divide climbs, so one gesture drives both.
+    if (running_) renderGrains(out, frames, progress_.load(std::memory_order_relaxed),
+                               transport.sampleRate);
+    else for (Grain& grain : grains_) grain.active = false;
+
     publishedProgress_.store(progress_.load(std::memory_order_relaxed), std::memory_order_relaxed);
     publishedRunning_.store(running_, std::memory_order_release);
 }
@@ -194,6 +351,7 @@ void BuildNode::process(ProcessContext& ctx) {
 
 void BuildNode::serviceFromMessageThread() {
     riser_.collect();
+    snippet_.collect();
     driveTargets();
 }
 
@@ -308,6 +466,9 @@ void BuildNode::saveExtraState(JsonValue& out) const {
     out.set("stemPlayer", static_cast<int>(stemPlayer_));
     out.set("colorNode", static_cast<int>(colorNode_));
     out.set("chopMask", static_cast<int>(chopMask_));
+    out.set("trimStart", trimStart_);
+    out.set("trimEnd", trimEnd_);
+    out.set("snippetLabel", snippetLabel_);
 }
 
 void BuildNode::loadExtraState(const JsonValue& in) {
@@ -315,6 +476,8 @@ void BuildNode::loadExtraState(const JsonValue& in) {
     colorNode_ = static_cast<NodeId>(in.getInt("colorNode", static_cast<int>(kInvalidNode)));
 
     chopMask_ = static_cast<std::uint32_t>(in.getInt("chopMask", 0x3));
+    snippetLabel_ = in.getString("snippetLabel");
+    setTrim(in.getFloat("trimStart", 0.0f), in.getFloat("trimEnd", 1.0f));
 
     if (const std::string path = in.getString("riser"); !path.empty())
         loadRiser(path, nullptr);
