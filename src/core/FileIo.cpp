@@ -285,6 +285,9 @@ std::vector<DirectoryEntry> listDirectory(const std::string& utf8Path,
         entry.fullPath = pathJoin(utf8Path, name);
         entry.isDirectory = (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
         entry.size = (static_cast<std::int64_t>(findData.nFileSizeHigh) << 32) | findData.nFileSizeLow;
+        entry.modifiedTime =
+            (static_cast<std::int64_t>(findData.ftLastWriteTime.dwHighDateTime) << 32)
+            | findData.ftLastWriteTime.dwLowDateTime;
 
         if (accepted(entry.name, entry.isDirectory)) entries.push_back(std::move(entry));
     } while (::FindNextFileW(handle, &findData));

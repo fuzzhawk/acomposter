@@ -114,6 +114,16 @@ bool Application::initialise() {
     songsView_.onSendToPatch = openOnCanvas;
     projectsView_.onSendToPatch = openOnCanvas;
 
+    librarianView_.initialise(&engine_, &library_);
+    librarianView_.onSendToPatch = openOnCanvas;
+    librarianView_.onBrowseForFolder = [this]() -> std::string {
+        return platform::pickFolderDialog(window_.handle(), "Choose a folder of samples");
+    };
+    // Starts somewhere rather than at "no folder chosen", which is a dead end
+    // for anyone who has not yet learned there is a folder button.
+    librarianView_.openFolder(paths::musicFolder().empty() ? paths::documents()
+                                                           : paths::musicFolder());
+
     inspector_.initialise(&engine_, &metasurface_, &library_);
     pluginView_.initialise(&plugins_);
     settings_.initialise(&engine_, &deviceSettings_);
@@ -476,6 +486,9 @@ void Application::serviceBackground() {
     // its chance to do message-thread work (plugin idle, waveform rebuilds).
     engine_.serviceFromMessageThread();
 
+    // Publishes a finished folder scan. Cheap when there is not one.
+    librarianView_.serviceFromMessageThread();
+
     // Files dropped on the window go to the canvas. The rectangle has to be the
     // one the patcher actually draws into, or the drop lands at the wrong world
     // position and misses the node it was aimed at.
@@ -615,9 +628,8 @@ void Application::layout(float deltaSeconds) {
             songsView_.render(ui_, full);
             break;
 
-        // Still a shell: the file librarian is its own piece of work.
         case ui::MainView::Library:
-            drawLibraryPlaceholder(full, activeView_);
+            librarianView_.render(ui_, full);
             break;
 
         case ui::MainView::Count:

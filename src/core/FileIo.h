@@ -37,6 +37,10 @@ struct DirectoryEntry {
     std::string fullPath;
     bool isDirectory = false;
     std::int64_t size = 0;
+    // Last write time, in whatever units the platform counts in. Only ever
+    // compared against a previously recorded value for the same file, so the
+    // epoch does not matter - only that it changes when the file does.
+    std::int64_t modifiedTime = 0;
 };
 
 std::vector<DirectoryEntry> listDirectory(const std::string& utf8Path,

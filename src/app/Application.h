@@ -18,6 +18,7 @@
 #include "../platform/Window.h"
 #include "../control/Surface.h"
 #include "../ui/ControlView.h"
+#include "../ui/LibrarianView.h"
 #include "../ui/LibraryView.h"
 #include "../ui/MetasurfaceView.h"
 #include "../ui/Panels.h"
@@ -123,6 +124,7 @@ private:
     // and a set of lyrics, and are the same in everything else.
     ui::LibraryView songsView_;
     ui::LibraryView projectsView_;
+    ui::LibrarianView librarianView_;
     ui::SettingsView settings_;
     ui::TransportBar transportBar_;
     ui::StatusBar statusBar_;

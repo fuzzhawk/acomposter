@@ -19,6 +19,9 @@ set(ACOMPOSTER_CORE_SOURCES
     audio/SampleBuffer.cpp
 
     control/Surface.cpp
+    dsp/Fft.cpp
+    library/AudioAnalysis.cpp
+    library/FileIndex.cpp
     library/ChainPreset.cpp
     library/Library.cpp
     library/TagPalette.cpp
@@ -105,6 +108,7 @@ set(ACOMPOSTER_APP_SOURCES
     platform/Window.cpp
 
     ui/ControlView.cpp
+    ui/LibrarianView.cpp
     ui/LibraryView.cpp
     ui/MetasurfaceView.cpp
     ui/Panels.cpp

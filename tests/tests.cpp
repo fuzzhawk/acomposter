@@ -17,6 +17,9 @@
 #include "../src/core/Transport.h"
 #include "../src/dsp/Dsp.h"
 #include "../src/meta/Metasurface.h"
+#include "../src/dsp/Fft.h"
+#include "../src/library/AudioAnalysis.h"
+#include "../src/library/FileIndex.h"
 #include "../src/library/ChainPreset.h"
 #include "../src/library/Library.h"
 #include "../src/nodes/BuildNode.h"
@@ -1497,6 +1500,292 @@ void testStemRoutingPersists() {
     CHECK(loaded.resolvedRoute(2) == 7);
 }
 
+void testFftRoundTripAndPeak() {
+    TEST("the FFT finds a tone where it is, and inverts to what it was");
+
+    dsp::Fft fft(1024);
+    CHECK(fft.size() == 1024);
+
+    // A size that is not a power of two rounds up rather than misbehaving.
+    dsp::Fft odd(1000);
+    CHECK(odd.size() == 1024);
+
+    constexpr double kRate = 48000.0;
+    constexpr double kHertz = 1000.0;
+
+    std::vector<float> tone(1024);
+    for (int i = 0; i < 1024; ++i)
+        tone[static_cast<std::size_t>(i)] = static_cast<float>(
+            std::sin(2.0 * 3.14159265358979323846 * kHertz * i / kRate));
+
+    std::vector<float> magnitude;
+    fft.magnitude(tone.data(), 1024, magnitude);
+    CHECK(magnitude.size() == 512);
+
+    int peakBin = 0;
+    for (int i = 1; i < 512; ++i)
+        if (magnitude[static_cast<std::size_t>(i)] > magnitude[static_cast<std::size_t>(peakBin)])
+            peakBin = i;
+
+    // 1 kHz at 48 kHz over 1024 points is bin 21.33, so 21 either way.
+    CHECK(std::abs(fft.binFrequency(peakBin, kRate) - kHertz) < 60.0);
+
+    // Forward then inverse returns the input. Without this the transform can be
+    // wrong in a way a magnitude peak would not show - a bit-reversal bug that
+    // scrambles phase leaves the spectrum looking perfect.
+    std::vector<float> real = tone;
+    std::vector<float> imag(1024, 0.0f);
+    fft.forward(real.data(), imag.data());
+    fft.inverse(real.data(), imag.data());
+
+    double worst = 0.0;
+    for (int i = 0; i < 1024; ++i)
+        worst = std::max(worst, std::fabs(static_cast<double>(real[static_cast<std::size_t>(i)])
+                                          - tone[static_cast<std::size_t>(i)]));
+    CHECK(worst < 1e-4);
+}
+
+void testNoteNaming() {
+    TEST("frequencies name the right notes, above and below A4");
+
+    int semitones = 0;
+    double cents = 0.0;
+
+    CHECK(dsp::frequencyToNote(440.0, semitones, cents));
+    CHECK(semitones == 0);
+    CHECK(std::fabs(cents) < 1.0);
+    CHECK(std::string(dsp::noteNameForSemitone(semitones)) == "A");
+    CHECK(dsp::octaveForSemitone(semitones) == 4);
+
+    // Middle C, three semitones below A4 by name and nine below by count.
+    CHECK(dsp::frequencyToNote(261.626, semitones, cents));
+    CHECK(semitones == -9);
+    CHECK(std::string(dsp::noteNameForSemitone(semitones)) == "C");
+    CHECK(dsp::octaveForSemitone(semitones) == 4);
+
+    // Two octaves down. C++ truncates toward zero, so negative semitone counts
+    // are where a naive modulo names the wrong note.
+    CHECK(dsp::frequencyToNote(65.406, semitones, cents));
+    CHECK(std::string(dsp::noteNameForSemitone(semitones)) == "C");
+    CHECK(dsp::octaveForSemitone(semitones) == 2);
+
+    CHECK(dsp::frequencyToNote(880.0, semitones, cents));
+    CHECK(dsp::octaveForSemitone(semitones) == 5);
+
+    // Detuned upward lands on the same note and says how far off it is. A
+    // third of a semitone rather than exactly half, because half is ambiguous
+    // by construction and rounds whichever way the standard library does.
+    CHECK(dsp::frequencyToNote(440.0 * std::pow(2.0, 0.3 / 12.0), semitones, cents));
+    CHECK(semitones == 0);
+    CHECK(std::fabs(cents - 30.0) < 2.0);
+
+    CHECK(!dsp::frequencyToNote(4.0, semitones, cents));
+}
+
+void testAnalysisSeparatesSounds() {
+    TEST("analysis tells a bass note from a hiss, and finds its pitch");
+
+    constexpr double kRate = 48000.0;
+    constexpr std::int64_t kFrames = 24000;   // half a second
+
+    // A 110 Hz tone: A2.
+    auto bass = std::make_shared<SampleBuffer>(1, kFrames, kRate);
+    for (std::int64_t i = 0; i < kFrames; ++i)
+        bass->channelForWrite(0)[i] = 0.8f * static_cast<float>(
+            std::sin(2.0 * 3.14159265358979323846 * 110.0 * static_cast<double>(i) / kRate));
+
+    const library::Analysis bassAnalysis = library::analyse(*bass, "bass_note_03.wav");
+    CHECK(bassAnalysis.valid);
+    CHECK(std::fabs(bassAnalysis.pitchHz - 110.0) < 3.0);
+    CHECK(bassAnalysis.pitchConfidence > 0.5f);
+    CHECK(bassAnalysis.noteName == "A2");
+    CHECK_CLOSE(bassAnalysis.peak, 0.8, 1e-3);
+
+    // Numbers come out of the name in the order they appear.
+    CHECK(bassAnalysis.filenameNumbers.size() == 1);
+    CHECK(bassAnalysis.filenameNumbers[0] == 3);
+
+    // Noise: the same length and level, no pitch anyone should trust.
+    // nextFloat() is already bipolar - rescaling it as if it were 0..1 adds a
+    // large DC offset, and DC correlates perfectly at every lag, which reads as
+    // a confidently pitched signal.
+    auto hiss = std::make_shared<SampleBuffer>(1, kFrames, kRate);
+    dsp::Xorshift random{ 0x1234u };
+    for (std::int64_t i = 0; i < kFrames; ++i)
+        hiss->channelForWrite(0)[i] = random.nextFloat() * 0.8f;
+
+    const library::Analysis hissAnalysis = library::analyse(*hiss, "hat.wav");
+    CHECK(hissAnalysis.valid);
+    // Noise correlates with itself about as well as chance allows, which is
+    // the number the harmonic search leans on to leave it out.
+    CHECK(hissAnalysis.pitchConfidence < 0.2f);
+    CHECK(hissAnalysis.noteName.empty());
+
+    // Brightness separates them without any further thought, which is the whole
+    // reason the centroid is here.
+    CHECK(hissAnalysis.centroidHz > bassAnalysis.centroidHz * 4.0);
+
+    // A tone is like itself and unlike noise.
+    CHECK(library::similarity(bassAnalysis, bassAnalysis) > 0.95f);
+    CHECK(library::similarity(bassAnalysis, hissAnalysis) < 0.5f);
+
+    // And a fifth above is still more like the bass than the hiss is.
+    auto fifth = std::make_shared<SampleBuffer>(1, kFrames, kRate);
+    for (std::int64_t i = 0; i < kFrames; ++i)
+        fifth->channelForWrite(0)[i] = 0.8f * static_cast<float>(
+            std::sin(2.0 * 3.14159265358979323846 * 164.81 * static_cast<double>(i) / kRate));
+
+    const library::Analysis fifthAnalysis = library::analyse(*fifth, "e.wav");
+    CHECK(library::similarity(bassAnalysis, fifthAnalysis)
+          > library::similarity(bassAnalysis, hissAnalysis));
+}
+
+void testFilenameNumbersAndPitchClass() {
+    TEST("numbers are pulled out of names, and octaves fold to one key");
+
+    const std::vector<int> numbers = library::extractNumbers("kick_03_174bpm take2.wav");
+    CHECK(numbers.size() == 3);       // 03, 174, 2
+    CHECK(numbers[0] == 3);
+    CHECK(numbers[1] == 174);
+    CHECK(numbers[2] == 2);
+
+    CHECK(library::extractNumbers("no digits here").empty());
+
+    // A run too long to be a take number is skipped rather than overflowing.
+    const std::vector<int> huge = library::extractNumbers("bounce_12345678901234.wav");
+    CHECK(huge.empty());
+
+    // A C2 bass and a C4 pad are in the same key, which is the comparison a
+    // harmonic search has to make.
+    CHECK(library::sameePitchClass(-9, 3));
+    CHECK(library::sameePitchClass(-21, -9));
+    CHECK(!library::sameePitchClass(-9, -8));
+}
+
+void testFileIndexCacheAndQuery() {
+    TEST("the index caches its analysis and answers questions about it");
+
+    const std::string root = "acomposter-test-tmp/index";
+    createDirectories(root);
+    for (const DirectoryEntry& file : listDirectory(root, { ".json", ".wav" }))
+        deleteFile(file.fullPath);
+
+    library::FileIndex index;
+
+    // Built by hand rather than scanned: a scan needs real files on disk and a
+    // thread, and what is being tested here is the querying and the cache.
+    const auto make = [](const char* name, double seconds, double centroid,
+                         const char* note, int semitones, float rms) {
+        library::IndexedFile file;
+        file.path = std::string("C:\\samples\\") + name;
+        file.name = name;
+        file.sizeBytes = 1000;
+        file.modifiedTime = 42;
+        file.analysis.valid = true;
+        file.analysis.durationSeconds = seconds;
+        file.analysis.centroidHz = centroid;
+        file.analysis.noteName = note;
+        file.analysis.semitonesFromA4 = semitones;
+        file.analysis.rms = rms;
+        file.analysis.filenameNumbers = library::extractNumbers(name);
+        for (int i = 0; i < library::kSpectrumBands; ++i)
+            file.analysis.bands[i] = 1.0f / library::kSpectrumBands;
+        return file;
+    };
+
+    // Reaching the index's private list is not possible, so it is loaded from a
+    // cache file - which also exercises the path the application uses.
+    {
+        JsonValue root_object = JsonValue::object();
+        JsonValue array = JsonValue::array();
+
+        const library::IndexedFile files[] = {
+            make("kick_01.wav", 0.4, 200.0, "", 0, 0.5f),
+            make("bass_c2.wav", 1.2, 300.0, "C2", -21, 0.4f),
+            make("pad_c4.wav", 8.0, 1200.0, "C4", 3, 0.2f),
+            make("hat_09.wav", 0.1, 9000.0, "", 0, 0.3f),
+        };
+
+        for (const library::IndexedFile& file : files) {
+            JsonValue entry = JsonValue::object();
+            entry.set("path", file.path);
+            entry.set("name", file.name);
+            entry.set("size", file.sizeBytes);
+            entry.set("modified", file.modifiedTime);
+
+            JsonValue analysis = JsonValue::object();
+            analysis.set("duration", file.analysis.durationSeconds);
+            analysis.set("centroid", file.analysis.centroidHz);
+            analysis.set("note", file.analysis.noteName);
+            analysis.set("semitones", file.analysis.semitonesFromA4);
+            analysis.set("rms", file.analysis.rms);
+
+            JsonValue numbers = JsonValue::array();
+            for (const int number : file.analysis.filenameNumbers) numbers.push(number);
+            analysis.set("numbers", std::move(numbers));
+
+            entry.set("analysis", std::move(analysis));
+            array.push(std::move(entry));
+        }
+
+        root_object.set("files", std::move(array));
+        CHECK(writeFileText(pathJoin(root, "cache.json"), root_object.dump(1)));
+    }
+
+    CHECK(index.loadCache(pathJoin(root, "cache.json")));
+    CHECK(index.files().size() == 4);
+
+    library::Filter filter;
+
+    // Sorting by something the analysis found is most of what the index is for.
+    auto byLength = index.query(filter, library::SortKey::Duration, false);
+    CHECK(byLength.size() == 4);
+    CHECK(byLength.front()->name == "hat_09.wav");
+    CHECK(byLength.back()->name == "pad_c4.wav");
+
+    auto byBright = index.query(filter, library::SortKey::Brightness, true);
+    CHECK(byBright.front()->name == "hat_09.wav");
+
+    // Harmonic search folds octaves: a C2 bass and a C4 pad are the same key,
+    // which is the comparison that makes it useful at all.
+    filter.semitonesFromA4 = 3;   // C
+    auto inC = index.query(filter, library::SortKey::Name, false);
+    CHECK(inC.size() == 2);
+    CHECK(inC.front()->name == "bass_c2.wav");
+
+    // An unpitched file is never in a key, whichever key is asked for.
+    filter.semitonesFromA4 = -128;
+    filter.pitchedOnly = true;
+    CHECK(index.query(filter, library::SortKey::Name, false).size() == 2);
+
+    filter.pitchedOnly = false;
+    filter.text = "kick";
+    CHECK(index.query(filter, library::SortKey::Name, false).size() == 1);
+
+    filter.text.clear();
+    filter.minSeconds = 0.2;
+    filter.maxSeconds = 2.0;
+    auto inRange = index.query(filter, library::SortKey::Name, false);
+    CHECK(inRange.size() == 2);
+
+    // The cache round-trips, which is what makes reopening a folder instant.
+    CHECK(index.saveCache(pathJoin(root, "again.json")));
+
+    library::FileIndex reloaded;
+    CHECK(reloaded.loadCache(pathJoin(root, "again.json")));
+    CHECK(reloaded.files().size() == 4);
+
+    const library::IndexedFile* bass = reloaded.find("C:\\samples\\bass_c2.wav");
+    CHECK(bass != nullptr);
+    CHECK(bass->analysis.noteName == "C2");
+    CHECK(bass->analysis.filenameNumbers.size() == 1);
+    CHECK(bass->analysis.filenameNumbers[0] == 2);
+
+    // A file that was never indexed is absent rather than a default-constructed
+    // entry pretending it was analysed.
+    CHECK(reloaded.find("C:\\samples\\nothing.wav") == nullptr);
+}
+
 void testProjectRunningOrder() {
     TEST("a project's running order is the project's, not the songs'");
 
@@ -2078,6 +2367,11 @@ int main() {
     testSurfaceGridKeepsControlsReachable();
     testStemTagRouting();
     testStemRoutingPersists();
+    testFftRoundTripAndPeak();
+    testNoteNaming();
+    testAnalysisSeparatesSounds();
+    testFilenameNumbersAndPitchClass();
+    testFileIndexCacheAndQuery();
     testProjectRunningOrder();
     testChainPresetRoundTrip();
     testChainStoreNamesSurviveSanitising();
