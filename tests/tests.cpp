@@ -1497,6 +1497,69 @@ void testStemRoutingPersists() {
     CHECK(loaded.resolvedRoute(2) == 7);
 }
 
+void testProjectRunningOrder() {
+    TEST("a project's running order is the project's, not the songs'");
+
+    const std::string root = "acomposter-test-tmp/library-6";
+    clearTestLibrary(root);
+
+    library::Library lib;
+    CHECK(lib.open(root));
+
+    const std::string album = lib.create(library::EntryKind::Project, "Album");
+    const std::string other = lib.create(library::EntryKind::Project, "Compilation");
+    const std::string a = lib.create(library::EntryKind::Song, "Opener");
+    const std::string b = lib.create(library::EntryKind::Song, "Middle");
+    const std::string c = lib.create(library::EntryKind::Song, "Closer");
+
+    CHECK(lib.addMember(album, a));
+    CHECK(lib.addMember(album, b));
+    CHECK(lib.addMember(album, c));
+
+    CHECK(lib.find(album)->members.size() == 3);
+    CHECK(lib.find(album)->members[0] == a);
+
+    // Moving is by places, and running off either end does nothing rather than
+    // wrapping - a song at the top of the order stays there.
+    CHECK(lib.moveMember(album, c, -1));
+    CHECK(lib.find(album)->members[1] == c);
+    CHECK(lib.find(album)->members[2] == b);
+
+    CHECK(!lib.moveMember(album, a, -1));
+    CHECK(lib.find(album)->members[0] == a);
+
+    // The same song in two projects sits in a different place in each. This is
+    // why the order lives on the project: a position field on the song could
+    // only ever answer for one of them.
+    CHECK(lib.addMember(other, c));
+    CHECK(lib.addMember(other, a));
+    CHECK(lib.find(other)->members[0] == c);
+    CHECK(lib.find(album)->members[0] == a);
+
+    // Removing from one project leaves the other and leaves the song.
+    CHECK(lib.removeMember(album, c));
+    CHECK(lib.find(album)->members.size() == 2);
+    CHECK(lib.find(other)->members.size() == 2);
+    CHECK(lib.find(c) != nullptr);
+
+    // And the order survives being written and read back.
+    library::Library reopened;
+    CHECK(reopened.open(root));
+    CHECK(reopened.find(album)->members.size() == 2);
+    CHECK(reopened.find(other)->members[0] == c);
+
+    // Deleting a song takes it out of every project that referenced it - and
+    // stays gone after a reopen, which is the half that a memory-only removal
+    // would quietly fail.
+    CHECK(reopened.remove(a));
+    CHECK(reopened.find(album)->members.size() == 1);
+
+    library::Library third;
+    CHECK(third.open(root));
+    CHECK(third.find(album)->members.size() == 1);
+    CHECK(third.find(other)->members.size() == 1);
+}
+
 void testChainPresetRoundTrip() {
     TEST("chain presets survive being written and re-read");
 
@@ -2015,6 +2078,7 @@ int main() {
     testSurfaceGridKeepsControlsReachable();
     testStemTagRouting();
     testStemRoutingPersists();
+    testProjectRunningOrder();
     testChainPresetRoundTrip();
     testChainStoreNamesSurviveSanitising();
     testLibraryOpensItsChainStore();

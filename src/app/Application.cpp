@@ -101,6 +101,19 @@ bool Application::initialise() {
         activeView_ = ui::MainView::Patch;
         markModified();
     };
+    songsView_.initialise(&engine_, &library_, library::EntryKind::Song);
+    projectsView_.initialise(&engine_, &library_, library::EntryKind::Project);
+
+    const auto openOnCanvas = [this](const std::string& path) {
+        auto player = std::make_unique<SamplePlayerNode>();
+        player->loadFile(path, nullptr);
+        patcher_.placeNode(std::move(player), patcher_.defaultDropPosition(canvasBounds()));
+        activeView_ = ui::MainView::Patch;
+        markModified();
+    };
+    songsView_.onSendToPatch = openOnCanvas;
+    projectsView_.onSendToPatch = openOnCanvas;
+
     inspector_.initialise(&engine_, &metasurface_, &library_);
     pluginView_.initialise(&plugins_);
     settings_.initialise(&engine_, &deviceSettings_);
@@ -594,10 +607,15 @@ void Application::layout(float deltaSeconds) {
             stemBrowser_.render(ui_, full);
             break;
 
-        // Shells for now: the tab architecture and the store behind them are
-        // real, the views are not yet.
         case ui::MainView::Projects:
+            projectsView_.render(ui_, full);
+            break;
+
         case ui::MainView::Songs:
+            songsView_.render(ui_, full);
+            break;
+
+        // Still a shell: the file librarian is its own piece of work.
         case ui::MainView::Library:
             drawLibraryPlaceholder(full, activeView_);
             break;

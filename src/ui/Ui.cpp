@@ -405,6 +405,14 @@ void Ui::drawIcon(DrawList& list, const Rect& rect, Icon icon, const Colour& col
             list.addLine({ c.x, c.y + s * 0.25f }, { c.x + s * 0.4f, c.y - s * 0.2f }, colour, thin);
             break;
 
+        // The same shape the other way up. Two buttons that move a row in
+        // opposite directions have to look like opposites, or the only way to
+        // find out which is which is to press one.
+        case Icon::ChevronUp:
+            list.addLine({ c.x - s * 0.4f, c.y + s * 0.2f }, { c.x, c.y - s * 0.25f }, colour, thin);
+            list.addLine({ c.x, c.y - s * 0.25f }, { c.x + s * 0.4f, c.y + s * 0.2f }, colour, thin);
+            break;
+
         case Icon::Gear: {
             list.addCircle(c, s * 0.42f, colour, thin);
             for (int i = 0; i < 6; ++i) {

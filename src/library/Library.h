@@ -50,16 +50,16 @@ struct Entry {
     std::vector<std::string> tags;
 
     // Songs a project contains, in album order. Only meaningful for projects.
+    //
+    // The order lives here, on the project, rather than as a number on the song.
+    // A song belongs to as many projects as it likes, so a single position field
+    // on the song cannot say where it sits in each of them - which is the whole
+    // point of membership being non-destructive.
     std::vector<std::string> members;
 
     // Musical facts worth keeping next to the audio.
     double bpm = 0.0;
     std::string key;
-
-    // Sort order within its parent project. Album ordering is a property of the
-    // membership, so it lives on the song rather than being implied by the
-    // order of a list somebody might sort by name.
-    int order = 0;
 
     bool hasFile(const std::string& path) const;
     bool hasTag(const std::string& tagId) const;
@@ -98,6 +98,9 @@ public:
     bool removeFile(const std::string& entryId, const std::string& path);
     bool addMember(const std::string& projectId, const std::string& songId);
     bool removeMember(const std::string& projectId, const std::string& songId);
+    // Moves a song within its project's running order. `delta` is in places;
+    // moving past either end does nothing rather than wrapping.
+    bool moveMember(const std::string& projectId, const std::string& songId, int delta);
 
     // Every entry that references a path - the answer to "what is this file
     // used by", which is the question that makes a non-destructive library

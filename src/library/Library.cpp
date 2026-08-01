@@ -127,10 +127,11 @@ std::vector<const Entry*> Library::entriesOfKind(EntryKind kind) const {
     for (const Entry& entry : entries_)
         if (entry.kind == kind) out.push_back(&entry);
 
-    std::sort(out.begin(), out.end(), [](const Entry* a, const Entry* b) {
-        if (a->order != b->order) return a->order < b->order;
-        return a->name < b->name;
-    });
+    // By name. A project's running order is the project's own member list, not
+    // a property of the songs in it - a song in three albums sits in a different
+    // place in each.
+    std::sort(out.begin(), out.end(),
+              [](const Entry* a, const Entry* b) { return a->name < b->name; });
     return out;
 }
 
@@ -153,7 +154,6 @@ std::string Library::create(EntryKind kind, const std::string& name) {
     entry.id = makeUniqueId(name.empty() ? std::string(toString(kind)) : name);
     entry.kind = kind;
     entry.name = name.empty() ? entry.id : name;
-    entry.order = static_cast<int>(entriesOfKind(kind).size());
 
     entries_.push_back(entry);
     save(entry.id);
@@ -170,9 +170,15 @@ bool Library::remove(const std::string& id) {
     deleteFile(entryPath(id));
     entries_.erase(it);
 
+    // Every project that referenced it loses the reference - and is written
+    // back. Doing this in memory alone left the removal looking correct until
+    // the library was next opened, at which point the deleted song reappeared
+    // in the running order as a member with no entry behind it.
     for (Entry& entry : entries_) {
+        const auto before = entry.members.size();
         entry.members.erase(std::remove(entry.members.begin(), entry.members.end(), id),
                             entry.members.end());
+        if (entry.members.size() != before) save(entry.id);
     }
     return true;
 }
@@ -228,6 +234,22 @@ bool Library::removeMember(const std::string& projectId, const std::string& song
     if (it == project->members.end()) return true;
 
     project->members.erase(it);
+    return save(projectId);
+}
+
+bool Library::moveMember(const std::string& projectId, const std::string& songId, int delta) {
+    Entry* project = find(projectId);
+    if (!project || delta == 0) return false;
+
+    const auto it = std::find(project->members.begin(), project->members.end(), songId);
+    if (it == project->members.end()) return false;
+
+    const auto index = static_cast<int>(std::distance(project->members.begin(), it));
+    const int target = index + delta;
+    if (target < 0 || target >= static_cast<int>(project->members.size())) return false;
+
+    std::swap(project->members[static_cast<std::size_t>(index)],
+              project->members[static_cast<std::size_t>(target)]);
     return save(projectId);
 }
 
@@ -310,7 +332,6 @@ Entry Library::fromJson(const JsonValue& value) {
     entry.lyrics = value.getString("lyrics");
     entry.bpm = value.getDouble("bpm", 0.0);
     entry.key = value.getString("key");
-    entry.order = value.getInt("order", 0);
 
     const auto readList = [&](const char* key, std::vector<std::string>& out) {
         const JsonValue* array = value.find(key);
@@ -341,7 +362,6 @@ JsonValue Library::toJson(const Entry& entry) {
     if (!entry.lyrics.empty()) root.set("lyrics", entry.lyrics);
     if (entry.bpm > 0.0) root.set("bpm", entry.bpm);
     if (!entry.key.empty()) root.set("key", entry.key);
-    root.set("order", entry.order);
 
     const auto writeList = [&](const char* key, const std::vector<std::string>& from) {
         if (from.empty()) return;

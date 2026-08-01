@@ -18,6 +18,7 @@
 #include "../platform/Window.h"
 #include "../control/Surface.h"
 #include "../ui/ControlView.h"
+#include "../ui/LibraryView.h"
 #include "../ui/MetasurfaceView.h"
 #include "../ui/Panels.h"
 #include "../ui/PatcherView.h"
@@ -118,6 +119,10 @@ private:
     ui::InspectorView inspector_;
     ui::PluginManagerView pluginView_;
     ui::StemBrowserView stemBrowser_;
+    // One class, two tabs: a project and a song differ in a running order
+    // and a set of lyrics, and are the same in everything else.
+    ui::LibraryView songsView_;
+    ui::LibraryView projectsView_;
     ui::SettingsView settings_;
     ui::TransportBar transportBar_;
     ui::StatusBar statusBar_;

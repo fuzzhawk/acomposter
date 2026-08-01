@@ -105,6 +105,7 @@ set(ACOMPOSTER_APP_SOURCES
     platform/Window.cpp
 
     ui/ControlView.cpp
+    ui/LibraryView.cpp
     ui/MetasurfaceView.cpp
     ui/Panels.cpp
     ui/StemBrowserView.cpp

@@ -183,7 +183,7 @@ public:
     // A button that draws a shape rather than a glyph, so the interface needs no
     // icon font and no image assets.
     enum class Icon {
-        Play, Stop, Pause, Record, Loop, Rewind, Plus, Minus, Cross, Chevron,
+        Play, Stop, Pause, Record, Loop, Rewind, Plus, Minus, Cross, Chevron, ChevronUp,
         Gear, Folder, Save, Power, Wave, Grid, Target, Link, Trash, Refresh,
     };
     bool iconButton(UiId control, const Rect& rect, Icon icon,
