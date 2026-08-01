@@ -17,6 +17,7 @@
 #include "../src/core/Transport.h"
 #include "../src/dsp/Dsp.h"
 #include "../src/meta/Metasurface.h"
+#include "../src/library/Library.h"
 #include "../src/nodes/BuildNode.h"
 #include "../src/nodes/ColorNode.h"
 #include "../src/nodes/NodeFactory.h"
@@ -893,6 +894,133 @@ double renderBeats(Graph& graph, TransportState& transport, double beats, int bl
     return transport.ppqPosition;
 }
 
+
+// ---------------------------------------------------------------------------
+// Library
+// ---------------------------------------------------------------------------
+
+void testLibraryRoundTrip() {
+    TEST("library entries survive being written and re-read");
+
+    const std::string root = "acomposter-test-library";
+
+    {
+        library::Library lib;
+        CHECK(lib.open(root));
+
+        const std::string song = lib.create(library::EntryKind::Song, "Night Drive");
+        CHECK(!song.empty());
+
+        library::Entry* entry = lib.find(song);
+        CHECK(entry != nullptr);
+        entry->notes = "second verse needs a lift";
+        entry->lyrics = "one line\ntwo line";
+        entry->bpm = 124.0;
+        CHECK(lib.save(song));
+
+        CHECK(lib.addFile(song, "C:\\stems\\drums.wav"));
+        // Adding the same file twice is what a second drag does, and must not
+        // produce a duplicate.
+        CHECK(lib.addFile(song, "C:\\stems\\drums.wav"));
+        CHECK(lib.find(song)->files.size() == 1);
+
+        const std::string project = lib.create(library::EntryKind::Project, "Album One");
+        CHECK(lib.addMember(project, song));
+    }
+
+    // Re-opened from disk in a fresh object: this is the property that matters,
+    // because the files are meant to be the source of truth rather than a cache.
+    {
+        library::Library lib;
+        CHECK(lib.open(root));
+
+        const auto songs = lib.entriesOfKind(library::EntryKind::Song);
+        CHECK(songs.size() == 1);
+        CHECK(songs[0]->name == "Night Drive");
+        CHECK(songs[0]->notes == "second verse needs a lift");
+        CHECK(songs[0]->lyrics == "one line\ntwo line");
+        CHECK_CLOSE(songs[0]->bpm, 124.0, 1e-9);
+        CHECK(songs[0]->files.size() == 1);
+
+        const auto projects = lib.entriesOfKind(library::EntryKind::Project);
+        CHECK(projects.size() == 1);
+        CHECK(projects[0]->members.size() == 1);
+        CHECK(projects[0]->members[0] == songs[0]->id);
+    }
+}
+
+void testLibraryMultipleMembership() {
+    TEST("a file can belong to several songs at once");
+
+    const std::string root = "acomposter-test-library-2";
+
+    library::Library lib;
+    CHECK(lib.open(root));
+
+    const std::string a = lib.create(library::EntryKind::Song, "A Side");
+    const std::string b = lib.create(library::EntryKind::Song, "B Side");
+
+    const std::string shared = "C:\\stems\\shared-pad.wav";
+    CHECK(lib.addFile(a, shared));
+    CHECK(lib.addFile(b, shared));
+
+    // The question the library exists to answer before anything is reorganised.
+    const auto users = lib.entriesContaining(shared);
+    CHECK(users.size() == 2);
+
+    // Removing it from one leaves the other alone - nothing here owns a file.
+    CHECK(lib.removeFile(a, shared));
+    CHECK(lib.entriesContaining(shared).size() == 1);
+}
+
+void testLibraryTagging() {
+    TEST("tagging a file makes an asset entry and survives a rename");
+
+    const std::string root = "acomposter-test-library-3";
+
+    library::Library lib;
+    CHECK(lib.open(root));
+    CHECK(lib.palette().count() > 0);
+
+    const std::string tagId = lib.palette().tags()[0].id;
+    const std::string path = "C:\\stems\\kick-01.wav";
+
+    CHECK(lib.setTagForFile(path, tagId));
+    CHECK(lib.tagForFile(path) == tagId);
+
+    // Renaming a tag must not orphan what is already tagged with it: entries
+    // reference the id, and the id deliberately does not follow the name.
+    lib.palette().rename(0, "low thump");
+    CHECK(lib.tagForFile(path) == tagId);
+    CHECK(lib.palette().tags()[0].name == "low thump");
+
+    // Clearing works through the same call, which is what lets one control both
+    // assign and unassign.
+    CHECK(lib.setTagForFile(path, {}));
+    CHECK(lib.tagForFile(path).empty());
+}
+
+void testLibrarySurvivesBadEntry() {
+    TEST("one unreadable entry costs one entry, not the library");
+
+    const std::string root = "acomposter-test-library-4";
+
+    {
+        library::Library lib;
+        CHECK(lib.open(root));
+        lib.create(library::EntryKind::Song, "Good One");
+    }
+
+    // A half-written file, of the sort a crash mid-save would leave.
+    writeFileText(pathJoin(pathJoin(root, "entries"), "broken.json"), "{ this is not json");
+
+    library::Library lib;
+    int skipped = 0;
+    CHECK(lib.open(root, &skipped));
+    CHECK(skipped == 1);
+    CHECK(lib.entriesOfKind(library::EntryKind::Song).size() == 1);
+}
+
 void testStemSectionLaunch() {
     TEST("stem player defers a section change to the loop boundary");
 
@@ -1297,6 +1425,10 @@ int main() {
     testGraphFeedback();
     testChannelAdaptation();
     testBypass();
+    testLibraryRoundTrip();
+    testLibraryMultipleMembership();
+    testLibraryTagging();
+    testLibrarySurvivesBadEntry();
     testStemSectionLaunch();
     testStemImmediateLaunch();
     testStemSectionPersistence();

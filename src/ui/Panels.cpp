@@ -1398,6 +1398,24 @@ bool SettingsView::render(Ui& ui, const Rect& bounds, const platform::AudioDevic
     return true;
 }
 
+const char* toString(MainView view) noexcept {
+    switch (view) {
+        case MainView::Projects: return "projects";
+        case MainView::Songs:    return "songs";
+        case MainView::Library:  return "library";
+        case MainView::Stems:    return "stems";
+        case MainView::Control:  return "control";
+        case MainView::Plugins:  return "plug-ins";
+        case MainView::Patch:
+        default:                 return "patch";
+    }
+}
+
+bool isLibraryView(MainView view) noexcept {
+    return view == MainView::Projects || view == MainView::Songs
+        || view == MainView::Library || view == MainView::Stems;
+}
+
 // ---------------------------------------------------------------------------
 // TransportBar
 // ---------------------------------------------------------------------------
@@ -1513,16 +1531,30 @@ void TransportBar::render(Ui& ui, const Rect& bounds, MainView& activeView) {
     area.removeFromLeft(10.0f);
 
     // -- view tabs (right aligned) ----------------------------------------
-    Rect tabArea = area.removeFromRight(300.0f);
-    static const char* tabNames[] = { "patch", "metasurface", "plugins" };
-    const float tabWidth = tabArea.width / 3.0f;
+    // The library tabs are grouped and separated from the document tabs by a
+    // rule, because the difference between them is not cosmetic: everything to
+    // the left of it survives a patch being closed and everything to the right
+    // of it is the patch.
+    constexpr int kTabCount = static_cast<int>(MainView::Count);
+    Rect tabArea = area.removeFromRight(560.0f);
+    const float tabWidth = tabArea.width / static_cast<float>(kTabCount);
 
-    for (int i = 0; i < 3; ++i) {
-        const Rect tab = tabArea.removeFromLeft(tabWidth);
-        const bool selected = static_cast<int>(activeView) == i;
-        if (ui.button(ui.id(std::string("bar.tab.") + tabNames[i]), tab.deflated(2.0f),
-                      tabNames[i], Ui::ButtonStyle::Toggle, selected))
-            activeView = static_cast<MainView>(i);
+    for (int i = 0; i < kTabCount; ++i) {
+        const auto view = static_cast<MainView>(i);
+
+        // The rule between the library group and the document group.
+        if (view == MainView::Patch) {
+            Rect rule = tabArea.removeFromLeft(9.0f);
+            ui.separator(Rect{ rule.centre().x, rule.top() + 6.0f, 1.0f, rule.height - 12.0f },
+                         true);
+        }
+
+        const Rect tab = tabArea.removeFromLeft(view >= MainView::Patch
+                                                    ? tabWidth - 9.0f / 3.0f : tabWidth);
+        const bool selected = activeView == view;
+        if (ui.button(ui.id(std::string("bar.tab.") + toString(view)), tab.deflated(2.0f),
+                      toString(view), Ui::ButtonStyle::Toggle, selected))
+            activeView = view;
     }
 
     area.removeFromRight(12.0f);

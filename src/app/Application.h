@@ -19,6 +19,8 @@
 #include "../ui/MetasurfaceView.h"
 #include "../ui/Panels.h"
 #include "../ui/PatcherView.h"
+#include "../ui/StemBrowserView.h"
+#include "../library/Library.h"
 #include "../ui/Ui.h"
 #include "../vst2/PluginManager.h"
 
@@ -109,11 +111,18 @@ private:
     ui::BrowserView browser_;
     ui::InspectorView inspector_;
     ui::PluginManagerView pluginView_;
+    ui::StemBrowserView stemBrowser_;
     ui::SettingsView settings_;
     ui::TransportBar transportBar_;
     ui::StatusBar statusBar_;
 
     ui::MainView activeView_ = ui::MainView::Patch;
+
+    // The library outlives any patch: songs, projects, tagged assets and the
+    // tag palette are opened once at start-up and are deliberately untouched by
+    // loading or closing a document.
+    library::Library library_;
+    void drawLibraryPlaceholder(const gfx::Rect& bounds, ui::MainView view);
 
     // When set, the next plugin chosen in the manager is inserted into this
     // stem's rack instead of being dropped on the canvas.

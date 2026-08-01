@@ -195,7 +195,18 @@ private:
 // ---------------------------------------------------------------------------
 
 // Which of the main views is on screen.
-enum class MainView : int { Patch = 0, Metasurface, Plugins };
+//
+// The first four are *library* tabs: they describe material that outlives any
+// one patch, and their state is deliberately not part of the document. Patch and
+// Control are the document; Plugins is a tool. Keeping that split explicit here
+// is what stops a song's notes being lost because a patch was closed.
+enum class MainView : int {
+    Projects = 0, Songs, Library, Stems, Patch, Control, Plugins, Count
+};
+
+const char* toString(MainView view) noexcept;
+// True for the tabs whose state survives a patch being loaded or closed.
+bool isLibraryView(MainView view) noexcept;
 
 class TransportBar {
 public:

@@ -22,6 +22,9 @@ bool writeFileText(const std::string& utf8Path, std::string_view text, std::stri
 bool fileExists(const std::string& utf8Path);
 bool directoryExists(const std::string& utf8Path);
 bool createDirectories(const std::string& utf8Path);
+// Removes a file. True when it is gone afterwards, including when it was never
+// there - the caller almost always wants "make sure this does not exist".
+bool deleteFile(const std::string& utf8Path);
 std::int64_t fileSize(const std::string& utf8Path);
 // Last-write time as an opaque monotonic stamp; only used to compare against a
 // previously recorded value (the plugin scan cache).

@@ -9,6 +9,9 @@
 
 #include "AudioBuffer.h"
 #include "Denormals.h"
+#include "../audio/SampleBuffer.h"
+#include "../dsp/Dsp.h"
+#include "AtomicResource.h"
 #include "Graph.h"
 #include "Transport.h"
 #include "Types.h"
@@ -66,6 +69,22 @@ public:
     // Silences the graph and resets every node. Bound to a panic key.
     void panic() noexcept { panicRequested_.store(true, std::memory_order_release); }
 
+    // -- audition ----------------------------------------------------------
+    // A preview voice mixed in ahead of the master, independent of the graph and
+    // of the transport. The browser tabs need to hear a file without loading it
+    // into a patch, and a set-up patch must not have to be disturbed to do it.
+    void startPreview(std::shared_ptr<SampleBuffer> sample, double startSeconds = 0.0);
+    void stopPreview();
+    bool previewPlaying() const noexcept {
+        return previewPlaying_.load(std::memory_order_acquire);
+    }
+    // Where the preview voice has reached, in seconds. -1 when idle.
+    double previewPositionSeconds() const noexcept;
+    void seekPreview(double seconds) noexcept;
+    void setPreviewGainDb(float db) noexcept {
+        previewGain_.store(dsp::dbToGain(db), std::memory_order_relaxed);
+    }
+
     // -- output identification ---------------------------------------------
     // Walks a tone across the device's physical outputs, one at a time, so it
     // is possible to find out which socket is which without patching anything.
@@ -115,6 +134,16 @@ private:
     std::atomic<int> lastBlockSize_{ 0 };
 
     SmoothedValue masterSmoothing_;
+
+    // -- audition ----------------------------------------------------------
+    void renderPreview(int frames) noexcept;
+
+    AtomicResource<SampleBuffer> preview_;
+    std::atomic<bool> previewPlaying_{ false };
+    std::atomic<double> previewSeekRequest_{ -1.0 };
+    std::atomic<double> previewPosition_{ -1.0 };
+    std::atomic<float> previewGain_{ 1.0f };
+    double previewFrame_ = 0.0;
 
     // -- output test -------------------------------------------------------
     void renderOutputTest(float* output, int outputChannels, int frames) noexcept;

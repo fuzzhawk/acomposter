@@ -26,6 +26,7 @@ inline float softClip(float x) noexcept {
 
 Engine::Engine() {
     graph_.setClock(&blockCounter_);
+    preview_.setClock(&blockCounter_);
 }
 
 Engine::~Engine() = default;
@@ -114,6 +115,10 @@ void Engine::processInterleaved(const float* input, int inputChannels,
 
     graph_.render(state, frames, streamFrame, &deviceInput_, &deviceOutput_);
 
+    // The audition voice sits ahead of the master, so it is levelled and limited
+    // with everything else rather than being able to jump out of the mix.
+    renderPreview(frames);
+
     // Master section.
     const float targetGain = masterMuted_.load(std::memory_order_relaxed)
                                  ? 0.0f
@@ -169,6 +174,70 @@ void Engine::processInterleaved(const float* input, int inputChannels,
 
     lastBlockSize_.store(frames, std::memory_order_relaxed);
     blockCounter_.fetch_add(1, std::memory_order_release);
+}
+
+// ---------------------------------------------------------------------------
+// Audition
+// ---------------------------------------------------------------------------
+
+void Engine::startPreview(std::shared_ptr<SampleBuffer> sample, double startSeconds) {
+    if (!sample || sample->empty()) { stopPreview(); return; }
+
+    preview_.publish(std::move(sample));
+    previewSeekRequest_.store(std::max(0.0, startSeconds), std::memory_order_relaxed);
+    previewPlaying_.store(true, std::memory_order_release);
+}
+
+void Engine::stopPreview() {
+    previewPlaying_.store(false, std::memory_order_release);
+    previewPosition_.store(-1.0, std::memory_order_relaxed);
+}
+
+double Engine::previewPositionSeconds() const noexcept {
+    return previewPosition_.load(std::memory_order_relaxed);
+}
+
+void Engine::seekPreview(double seconds) noexcept {
+    previewSeekRequest_.store(std::max(0.0, seconds), std::memory_order_relaxed);
+}
+
+void Engine::renderPreview(int frames) noexcept {
+    if (!previewPlaying_.load(std::memory_order_acquire)) return;
+
+    const SampleBuffer* sample = preview_.get();
+    if (sample == nullptr || sample->empty()) return;
+
+    // A seek asked for from the UI is honoured at the top of the block rather
+    // than mid-buffer, so dragging the playhead cannot tear a frame in half.
+    const double seek = previewSeekRequest_.exchange(-1.0, std::memory_order_relaxed);
+    if (seek >= 0.0) previewFrame_ = seek * sample->sampleRate();
+
+    const double rateRatio = sample->sampleRate() / sampleRate_;
+    const float gain = previewGain_.load(std::memory_order_relaxed);
+    const int busChannels = deviceOutput_.channels();
+
+    for (int i = 0; i < frames; ++i) {
+        const std::int64_t index = static_cast<std::int64_t>(previewFrame_);
+        if (index < 0 || index >= sample->frames() - 1) {
+            // Ran off the end: stop rather than wrap. An audition that loops
+            // without being asked to is one you have to go and turn off.
+            previewPlaying_.store(false, std::memory_order_release);
+            previewPosition_.store(-1.0, std::memory_order_relaxed);
+            return;
+        }
+
+        const float fraction = static_cast<float>(previewFrame_ - static_cast<double>(index));
+
+        for (int c = 0; c < busChannels; ++c) {
+            const float* data = sample->channel(c < sample->channels() ? c : sample->channels() - 1);
+            const float value = data[index] + (data[index + 1] - data[index]) * fraction;
+            deviceOutput_.channel(c)[i] += value * gain;
+        }
+
+        previewFrame_ += rateRatio;
+    }
+
+    previewPosition_.store(previewFrame_ / sample->sampleRate(), std::memory_order_relaxed);
 }
 
 // ---------------------------------------------------------------------------
@@ -260,6 +329,7 @@ void Engine::resetStats() noexcept {
 }
 
 void Engine::serviceFromMessageThread() {
+    preview_.collect();
     graph_.collectGarbage();
     for (const auto& n : graph_.nodes())
         n->serviceFromMessageThread();

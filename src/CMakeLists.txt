@@ -18,6 +18,8 @@ set(ACOMPOSTER_CORE_SOURCES
     audio/AudioFile.cpp
     audio/SampleBuffer.cpp
 
+    library/Library.cpp
+    library/TagPalette.cpp
     nodes/BuildNode.cpp
     nodes/ColorNode.cpp
     nodes/CrossfaderNode.cpp
@@ -101,6 +103,7 @@ set(ACOMPOSTER_APP_SOURCES
 
     ui/MetasurfaceView.cpp
     ui/Panels.cpp
+    ui/StemBrowserView.cpp
     ui/PatcherView.cpp
     ui/Theme.cpp
     ui/Ui.cpp

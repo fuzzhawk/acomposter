@@ -235,6 +235,13 @@ std::int64_t fileModifiedTime(const std::string& utf8Path) {
 #endif
 }
 
+bool deleteFile(const std::string& utf8Path) {
+    if (utf8Path.empty()) return false;
+    if (::DeleteFileW(utf8ToWide(utf8Path).c_str())) return true;
+    return ::GetLastError() == ERROR_FILE_NOT_FOUND
+        || ::GetLastError() == ERROR_PATH_NOT_FOUND;
+}
+
 bool createDirectories(const std::string& utf8Path) {
     if (utf8Path.empty()) return false;
     if (directoryExists(utf8Path)) return true;

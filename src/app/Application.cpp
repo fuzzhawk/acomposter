@@ -78,6 +78,25 @@ bool Application::initialise() {
     patcher_.initialise(&engine_, &metasurface_, &plugins_);
     metasurfaceView_.initialise(&engine_, &metasurface_, &renderer_);
     browser_.initialise();
+
+    // The library is opened before any patch and is never touched by one.
+    int skipped = 0;
+    library_.open(pathJoin(paths::documents(), "acomposter\\library"), &skipped);
+    if (skipped > 0) {
+        ui_.notify(std::to_string(skipped) + " library entries could not be read",
+                   ui::theme().danger, 6.0f);
+    }
+
+    stemBrowser_.initialise(&engine_, &library_);
+    stemBrowser_.navigateTo(paths::musicFolder().empty() ? paths::documents()
+                                                         : paths::musicFolder());
+    stemBrowser_.onSendToPatch = [this](const std::string& path, const std::string&) {
+        auto player = std::make_unique<SamplePlayerNode>();
+        player->loadFile(path, nullptr);
+        patcher_.placeNode(std::move(player), patcher_.defaultDropPosition(canvasBounds()));
+        activeView_ = ui::MainView::Patch;
+        markModified();
+    };
     inspector_.initialise(&engine_, &metasurface_);
     pluginView_.initialise(&plugins_);
     settings_.initialise(&engine_, &deviceSettings_);
@@ -403,8 +422,26 @@ void Application::layout(float deltaSeconds) {
             break;
         }
 
-        case ui::MainView::Metasurface:
+        // The control tab is where the metasurface lives now, alongside the
+        // custom surface editor still to come. It renders the surface directly
+        // for the moment rather than pretending to be more than it is.
+        case ui::MainView::Control:
             metasurfaceView_.render(ui_, full);
+            break;
+
+        case ui::MainView::Stems:
+            stemBrowser_.render(ui_, full);
+            break;
+
+        // Shells for now: the tab architecture and the store behind them are
+        // real, the views are not yet.
+        case ui::MainView::Projects:
+        case ui::MainView::Songs:
+        case ui::MainView::Library:
+            drawLibraryPlaceholder(full, activeView_);
+            break;
+
+        case ui::MainView::Count:
             break;
 
         case ui::MainView::Plugins:
@@ -436,6 +473,34 @@ void Application::layout(float deltaSeconds) {
     (void)deltaSeconds;
 }
 
+
+void Application::drawLibraryPlaceholder(const gfx::Rect& bounds, ui::MainView view) {
+    const ui::Theme& t = ui::theme();
+    gfx::DrawList& list = ui_.draw();
+
+    list.addRectFilled(bounds, t.background);
+    gfx::Rect area = bounds.deflated(t.padding);
+
+    ui_.label(area.removeFromTop(26.0f), ui::toString(view), t.text, t.fontTitle);
+    area.removeFromTop(8.0f);
+
+    // The store behind these is real and already on disk; the views are not
+    // written yet. Saying which is which beats an empty rectangle.
+    const int count = static_cast<int>(
+        view == ui::MainView::Projects ? library_.entriesOfKind(library::EntryKind::Project).size()
+      : view == ui::MainView::Songs    ? library_.entriesOfKind(library::EntryKind::Song).size()
+                                       : library_.entries().size());
+
+    char summary[256];
+    std::snprintf(summary, sizeof(summary),
+                  "%d entries in %s", count, library_.root().c_str());
+    ui_.label(area.removeFromTop(18.0f), summary, t.textDim, t.fontUi);
+    area.removeFromTop(4.0f);
+
+    ui_.label(area.removeFromTop(18.0f),
+              "the store is live and hand-editable; this view is still to come",
+              t.textFaint, t.fontSmall);
+}
 
 void Application::drawTimelinePlaceholder(const gfx::Rect& bounds) {
     const ui::Theme& t = ui::theme();
@@ -500,7 +565,8 @@ void Application::handleGlobalShortcuts() {
         engine_.transport().togglePlaying();
 
     if (in.keyPressed(ui::key::F1)) activeView_ = ui::MainView::Patch;
-    if (in.keyPressed(ui::key::F1 + 1)) activeView_ = ui::MainView::Metasurface;
+    if (in.keyPressed(ui::key::F1 + 3)) activeView_ = ui::MainView::Stems;
+    if (in.keyPressed(ui::key::F1 + 1)) activeView_ = ui::MainView::Control;
     if (in.keyPressed(ui::key::F1 + 2)) activeView_ = ui::MainView::Plugins;
 
     // Ctrl+comma is the conventional settings shortcut on every platform.
