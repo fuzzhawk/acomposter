@@ -34,7 +34,11 @@
 #include "../src/nodes/NodeFactory.h"
 #include "../src/nodes/StemPlayerNode.h"
 #include "../src/patch/Patch.h"
-#include "../src/platform/DragOut.h"
+// Windows-only: it builds a CF_HDROP block, and the portable host build has
+// no such thing to build.
+#ifdef _WIN32
+#  include "../src/platform/DragOut.h"
+#endif
 #include "../src/vst2/PeArchitecture.h"
 
 #include <algorithm>
@@ -891,6 +895,7 @@ void testBase64() {
     CHECK(base64Decode("Zm9v\n YmFy") == base64Decode("Zm9vYmFy"));
 }
 
+#ifdef _WIN32
 void testDropFileList() {
     TEST("CF_HDROP path list");
 
@@ -929,6 +934,7 @@ void testDropFileList() {
     // Nothing to drag is still a well-formed, empty list.
     CHECK(platform::dropFileList({}) == std::wstring(1, L'\0'));
 }
+#endif
 
 
 // ---------------------------------------------------------------------------
@@ -2822,7 +2828,9 @@ int main() {
     testPatchRejectsRubbish();
     testPeArchitecture();
     testBase64();
+#ifdef _WIN32
     testDropFileList();
+#endif
 
     std::printf("----------------\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

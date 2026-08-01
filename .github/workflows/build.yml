@@ -169,19 +169,32 @@ jobs:
             -DACOMPOSTER_WERROR=ON
           cmake --build build/win32
 
-      - name: Run the portable tests on the host
+      # The cross-built test binary, run as-is. This used to be a second,
+      # native g++ build with a hand-written list of sources, on the grounds
+      # that the engine and codecs have no Windows dependency and so need no
+      # emulator. That list had to be extended by hand every time a subsystem
+      # was added, was not, and the step spent several commits failing to
+      # compile rather than failing a test - which is the least useful way for
+      # a test step to be red. Running what was just built cannot go stale.
+      - name: Install Wine
+        env:
+          WINEDEBUG: "-all"
         run: |
-          # The engine, codecs, metasurface and patch format have no Windows
-          # dependency, so they can be tested natively without an emulator.
-          g++ -std=c++20 -O1 -Wall -Wextra -Wno-unused-parameter -I src \
-            tests/tests.cpp \
-            src/core/Engine.cpp src/core/FileIo.cpp src/core/Graph.cpp \
-            src/core/Json.cpp src/core/Node.cpp src/core/Parameter.cpp \
-            src/core/Transport.cpp \
-            src/audio/*.cpp src/nodes/*.cpp src/meta/*.cpp src/patch/*.cpp \
-            src/vst2/PeArchitecture.cpp src/vst2/Vst2Plugin.cpp \
-            -o /tmp/acomposter_tests
-          /tmp/acomposter_tests
+          sudo apt-get install -y --no-install-recommends wine64
+          # First use creates the prefix, which prints a good deal and can take
+          # a moment. Doing it here keeps that out of the test step's output,
+          # and a failure here is a failure to set Wine up rather than a failed
+          # test.
+          wineboot --init
+
+      - name: Run the tests
+        env:
+          WINEDEBUG: "-all"
+        run: |
+          # wine64 on a 64-bit-only install; plain wine on a build where the
+          # two have been merged.
+          command -v wine64 >/dev/null && WINE=wine64 || WINE=wine
+          "$WINE" build/win64/bin/acomposter_tests.exe
 
       - name: Check the cross-built binaries
         run: |

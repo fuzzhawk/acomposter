@@ -8,6 +8,7 @@
 #ifdef _WIN32
 #  include <windows.h>
 #else
+#  include <cerrno>
 #  include <cstdio>
 #  include <sys/stat.h>
 #  include <dirent.h>
@@ -237,9 +238,16 @@ std::int64_t fileModifiedTime(const std::string& utf8Path) {
 
 bool deleteFile(const std::string& utf8Path) {
     if (utf8Path.empty()) return false;
+#ifdef _WIN32
     if (::DeleteFileW(utf8ToWide(utf8Path).c_str())) return true;
+    // Already gone is the outcome asked for, so it is a success. Anything else
+    // - in use, read-only, no permission - is not.
     return ::GetLastError() == ERROR_FILE_NOT_FOUND
         || ::GetLastError() == ERROR_PATH_NOT_FOUND;
+#else
+    if (::remove(utf8Path.c_str()) == 0) return true;
+    return errno == ENOENT;
+#endif
 }
 
 bool createDirectories(const std::string& utf8Path) {
