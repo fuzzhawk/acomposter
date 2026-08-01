@@ -98,6 +98,7 @@ void Ui::beginFrame(const InputState& input, Vec2 displaySize, float deltaSecond
     hotNext_ = kNoId;
     cursor_ = Cursor::Arrow;
     tooltip_.clear();
+    touchedParameter_ = nullptr;
     idStack_.clear();
     scrollStack_.clear();
     insidePopup_ = false;
@@ -704,6 +705,7 @@ bool Ui::parameterKnob(const Rect& rect, Parameter& parameter, const Colour& fil
     const bool changed = knob(control, knobArea, normalised, fill,
                               parameter.toNormalised(parameter.defaultValue()));
     if (changed) parameter.setNormalised(normalised);
+    if (changed || isActive(control)) touchedParameter_ = &parameter;
 
     if (!labelArea.empty())
         drawList_.addTextClipped(font(t.fontSmall), labelArea, t.textDim, parameter.name(),
@@ -748,6 +750,7 @@ bool Ui::parameterSlider(const Rect& rect, Parameter& parameter, const Colour& f
     float normalised = parameter.normalised();
     const bool changed = sliderNormalised(control, area, normalised, fill);
     if (changed) parameter.setNormalised(normalised);
+    if (changed || isActive(control)) touchedParameter_ = &parameter;
 
     if (!labelArea.empty())
         drawList_.addTextClipped(font(t.fontSmall), labelArea, t.textDim, parameter.name());
@@ -768,6 +771,7 @@ bool Ui::parameterToggle(const Rect& rect, Parameter& parameter, const Colour& f
 
     if (button(control, rect, parameter.name(), ButtonStyle::Toggle, on)) {
         parameter.setValue(on ? 0.0f : 1.0f);
+        touchedParameter_ = &parameter;
         return true;
     }
 
@@ -784,6 +788,7 @@ bool Ui::parameterChoice(const Rect& rect, Parameter& parameter) {
 
     if (combo(control, rect, parameter.choices(), selected)) {
         parameter.setValue(static_cast<float>(selected));
+        touchedParameter_ = &parameter;
         return true;
     }
     return false;

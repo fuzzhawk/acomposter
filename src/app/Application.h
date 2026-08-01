@@ -16,6 +16,8 @@
 #include "../patch/Patch.h"
 #include "../platform/AudioDevice.h"
 #include "../platform/Window.h"
+#include "../control/Surface.h"
+#include "../ui/ControlView.h"
 #include "../ui/MetasurfaceView.h"
 #include "../ui/Panels.h"
 #include "../ui/PatcherView.h"
@@ -88,6 +90,9 @@ private:
     // -- owned subsystems --------------------------------------------------
     Engine engine_;
     Metasurface metasurface_;
+    // The played layout, as opposed to the patch that makes the sound. Saved
+    // with the document, because a surface is built for one set.
+    control::Surface surface_;
     vst2::PluginManager plugins_;
 
     platform::Window window_;
@@ -108,6 +113,7 @@ private:
 
     ui::PatcherView patcher_;
     ui::MetasurfaceView metasurfaceView_;
+    ui::ControlView controlView_;
     ui::BrowserView browser_;
     ui::InspectorView inspector_;
     ui::PluginManagerView pluginView_;

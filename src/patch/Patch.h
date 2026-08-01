@@ -10,6 +10,7 @@
 
 #include "../core/Engine.h"
 #include "../core/Json.h"
+#include "../control/Surface.h"
 #include "../meta/Metasurface.h"
 
 #include <string>
@@ -45,20 +46,26 @@ inline constexpr int kFormatVersion = 1;
 inline constexpr const char* kFormatId = "acomposter-patch";
 inline constexpr const char* kFileExtension = ".acp";
 
+// The control surface travels with the patch: it addresses parameters by the
+// same (nodeId, paramIndex) pair everything else here does, so it is only
+// meaningful alongside the graph it was built against.
 JsonValue save(const Engine& engine, const Metasurface& metasurface,
+               const control::Surface& surface,
                const PatchViewState& view, const PatchMetadata& metadata);
 
-// Replaces the entire contents of `engine` and `metasurface`.
+// Replaces the entire contents of `engine`, `metasurface` and `surface`.
 PatchLoadResult load(const JsonValue& root, Engine& engine, Metasurface& metasurface,
+                     control::Surface& surface,
                      PatchViewState& view, PatchMetadata& metadata);
 
 bool saveToFile(const std::string& utf8Path, const Engine& engine,
-                const Metasurface& metasurface, const PatchViewState& view,
+                const Metasurface& metasurface, const control::Surface& surface,
+                const PatchViewState& view,
                 const PatchMetadata& metadata, std::string* error = nullptr);
 
 PatchLoadResult loadFromFile(const std::string& utf8Path, Engine& engine,
-                             Metasurface& metasurface, PatchViewState& view,
-                             PatchMetadata& metadata);
+                             Metasurface& metasurface, control::Surface& surface,
+                             PatchViewState& view, PatchMetadata& metadata);
 
 // Builds the patch a new document starts from: a sample player and a looper
 // through a crossfader into a mixer and out, which is enough to make a sound

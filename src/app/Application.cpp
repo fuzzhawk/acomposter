@@ -79,6 +79,8 @@ bool Application::initialise() {
     // -- views -------------------------------------------------------------
     patcher_.initialise(&engine_, &metasurface_, &plugins_);
     metasurfaceView_.initialise(&engine_, &metasurface_, &renderer_);
+    controlView_.initialise(&engine_, &surface_, &metasurfaceView_);
+    controlView_.onModified = [this] { markModified(); };
     browser_.initialise();
 
     // The library is opened before any patch and is never touched by one.
@@ -424,6 +426,29 @@ void Application::frame(float deltaSeconds) {
     layout(deltaSeconds);
     handleGlobalShortcuts();
 
+    // Learn: whatever parameter a widget was moved this frame becomes the
+    // control surface's next binding. Done after layout, because the parameter
+    // in question is touched somewhere inside it, and the address is resolved
+    // by looking the Parameter* back up in the graph - the widgets report a
+    // pointer because that is all they have, and only the application knows
+    // which node it came from.
+    if (controlView_.learning()) {
+        if (const Parameter* touched = ui_.touchedParameter()) {
+            ParamAddress address;
+            for (const auto& node : engine_.graph().nodes()) {
+                for (int p = 0; p < node->numParameters(); ++p) {
+                    if (&node->parameter(p) != touched) continue;
+                    address = ParamAddress{ node->id(), p };
+                    break;
+                }
+                if (address.valid()) break;
+            }
+
+            if (address.valid() && controlView_.completeLearn(address))
+                ui_.notify("bound", ui::theme().accent, 1.5f);
+        }
+    }
+
     ui_.endFrame();
     window_.applyCursor(ui_.cursor());
 
@@ -558,11 +583,11 @@ void Application::layout(float deltaSeconds) {
             break;
         }
 
-        // The control tab is where the metasurface lives now, alongside the
-        // custom surface editor still to come. It renders the surface directly
-        // for the moment rather than pretending to be more than it is.
+        // The control tab is the played layout. The metasurface is still here,
+        // but as one element a surface can place among its knobs rather than as
+        // the whole tab.
         case ui::MainView::Control:
-            metasurfaceView_.render(ui_, full);
+            controlView_.render(ui_, full);
             break;
 
         case ui::MainView::Stems:
@@ -738,6 +763,12 @@ void Application::newPatch() {
     closeAllPluginEditors();
     patch::buildDefaultPatch(engine_, metasurface_);
 
+    // The surface goes with the patch. Keeping the last one would leave every
+    // control bound to node ids that now belong to different nodes, which is
+    // worse than an empty surface by some distance.
+    surface_.clear();
+    controlView_.setEditing(false);
+
     patchPath_.clear();
     patchMetadata_ = PatchMetadata{};
     modified_ = false;
@@ -761,7 +792,7 @@ void Application::openPatchFile(const std::string& path) {
     closeAllPluginEditors();
 
     const PatchLoadResult result =
-        patch::loadFromFile(path, engine_, metasurface_, patchView_, patchMetadata_);
+        patch::loadFromFile(path, engine_, metasurface_, surface_, patchView_, patchMetadata_);
 
     if (!result.ok) {
         platform::messageDialog(window_.handle(), "Could not open patch", result.error, true);
@@ -772,6 +803,9 @@ void Application::openPatchFile(const std::string& path) {
     modified_ = false;
 
     patcher_.clearSelection();
+    // Every control shows where its parameter is in the patch just loaded.
+    surface_.adoptAllFromGraph(engine_.graph());
+
     patcher_.setPan({ patchView_.canvasX, patchView_.canvasY });
     patcher_.setZoom(patchView_.zoom);
     updateWindowTitle();
@@ -792,7 +826,8 @@ bool Application::savePatch() {
     if (patchPath_.empty()) return savePatchAs();
 
     std::string error;
-    if (!patch::saveToFile(patchPath_, engine_, metasurface_, patchView_, patchMetadata_, &error)) {
+    if (!patch::saveToFile(patchPath_, engine_, metasurface_, surface_, patchView_,
+                           patchMetadata_, &error)) {
         platform::messageDialog(window_.handle(), "Could not save patch", error, true);
         return false;
     }

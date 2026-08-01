@@ -499,19 +499,23 @@ void MetasurfaceView::update(float deltaSeconds) {
     }
 }
 
+void MetasurfaceView::renderPad(Ui& ui, const Rect& pad) {
+    if (!metasurface_ || !engine_) return;
+
+    drawField(ui, pad);
+    drawPath(ui, pad);
+    handleSurfaceInput(ui, pad);
+    drawSnapshots(ui, pad);
+    drawCursor(ui, pad);
+}
+
 void MetasurfaceView::render(Ui& ui, const Rect& bounds) {
     if (!metasurface_ || !engine_) return;
 
     const Theme& t = theme();
     ui.draw().addRectFilled(bounds, t.background);
 
-    const Rect surface = surfaceRect(bounds);
-
-    drawField(ui, surface);
-    drawPath(ui, surface);
-    handleSurfaceInput(ui, surface);
-    drawSnapshots(ui, surface);
-    drawCursor(ui, surface);
+    renderPad(ui, surfaceRect(bounds));
 
     drawControls(ui, bounds);
     drawSnapshotList(ui, bounds);

@@ -24,6 +24,12 @@ public:
     // `bounds` is the whole panel; the surface itself is squared off inside it.
     void render(Ui& ui, const Rect& bounds);
 
+    // Just the square - field, path, snapshots, cursor and their input, with no
+    // controls or list around it. This is what the control surface embeds when a
+    // layout puts the metasurface among its knobs and faders; there, the space
+    // is whatever cell it was given and the buttons live elsewhere.
+    void renderPad(Ui& ui, const Rect& pad);
+
     // Advances path playback and applies the surface. Called once per frame even
     // when the view is not visible, so a recorded gesture keeps running while
     // the performer works on the canvas.

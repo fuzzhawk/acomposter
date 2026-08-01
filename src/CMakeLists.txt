@@ -18,6 +18,7 @@ set(ACOMPOSTER_CORE_SOURCES
     audio/AudioFile.cpp
     audio/SampleBuffer.cpp
 
+    control/Surface.cpp
     library/ChainPreset.cpp
     library/Library.cpp
     library/TagPalette.cpp
@@ -103,6 +104,7 @@ set(ACOMPOSTER_APP_SOURCES
     platform/WasapiDevice.cpp
     platform/Window.cpp
 
+    ui/ControlView.cpp
     ui/MetasurfaceView.cpp
     ui/Panels.cpp
     ui/StemBrowserView.cpp

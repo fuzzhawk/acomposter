@@ -202,6 +202,14 @@ public:
 
     // The parameter-aware wrappers everything in the app actually calls: they
     // read and write the Parameter directly and show its formatted value.
+    // The parameter a widget was last moved. Reset at the start of each frame.
+    //
+    // This exists for the control surface's learn mode, which has to know which
+    // parameter the performer just touched. Reporting it here means no widget
+    // has to know that learn exists - the alternative was a "learning" flag
+    // threaded through every panel that draws a parameter, which is all of them.
+    const Parameter* touchedParameter() const noexcept { return touchedParameter_; }
+
     bool parameterKnob(const Rect& rect, Parameter& parameter, const Colour& fill,
                        bool showLabel = true);
     bool parameterSlider(const Rect& rect, Parameter& parameter, const Colour& fill,
@@ -361,6 +369,9 @@ private:
 
     std::string tooltip_;
     Vec2 tooltipPosition_{ 0.0f, 0.0f };
+
+    // Set by the parameter widgets, cleared each frame. See touchedParameter().
+    const Parameter* touchedParameter_ = nullptr;
 
     std::string notification_;
     Colour notificationColour_;

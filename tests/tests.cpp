@@ -21,6 +21,7 @@
 #include "../src/library/Library.h"
 #include "../src/nodes/BuildNode.h"
 #include "../src/nodes/DropNode.h"
+#include "../src/nodes/UtilityNodes.h"
 #include "../src/nodes/ColorNode.h"
 #include "../src/nodes/NodeFactory.h"
 #include "../src/nodes/StemPlayerNode.h"
@@ -654,6 +655,7 @@ void testPatchRoundTrip() {
     Engine engine;
     engine.prepare(48000.0, 256, 2, 2);
     Metasurface surface;
+    control::Surface panel;
     PatchViewState view;
     PatchMetadata metadata;
 
@@ -684,7 +686,7 @@ void testPatchRoundTrip() {
     engine.graph().node(faderId)->canvasX = 512.0f;
     engine.graph().node(faderId)->comment = "left hand";
 
-    const JsonValue saved = patch::save(engine, surface, view, metadata);
+    const JsonValue saved = patch::save(engine, surface, panel, view, metadata);
     const std::string text = saved.dump(2);
     CHECK(text.size() > 200);
 
@@ -692,6 +694,7 @@ void testPatchRoundTrip() {
     Engine reloaded;
     reloaded.prepare(48000.0, 256, 2, 2);
     Metasurface reloadedSurface;
+    control::Surface reloadedPanel;
     PatchViewState reloadedView;
     PatchMetadata reloadedMetadata;
 
@@ -700,7 +703,7 @@ void testPatchRoundTrip() {
     CHECK(parseError.empty());
 
     const PatchLoadResult result =
-        patch::load(parsed, reloaded, reloadedSurface, reloadedView, reloadedMetadata);
+        patch::load(parsed, reloaded, reloadedSurface, reloadedPanel, reloadedView, reloadedMetadata);
     CHECK(result.ok);
     if (!result.ok) std::printf("        %s\n", result.error.c_str());
     for (const std::string& warning : result.warnings)
@@ -735,7 +738,7 @@ void testPatchRoundTrip() {
 
     // Saving the reload produces the same document: no drift across cycles.
     // Checked before anything below mutates the reloaded patch.
-    const std::string second = patch::save(reloaded, reloadedSurface, reloadedView, reloadedMetadata).dump(2);
+    const std::string second = patch::save(reloaded, reloadedSurface, reloadedPanel, reloadedView, reloadedMetadata).dump(2);
     CHECK(second == text);
 
     // Applying a reloaded snapshot must reach the same value it captured.
@@ -751,13 +754,14 @@ void testPatchRejectsRubbish() {
     Engine engine;
     engine.prepare(48000.0, 256, 2, 2);
     Metasurface surface;
+    control::Surface panel;
     PatchViewState view;
     PatchMetadata metadata;
 
     // Not a patch at all.
     JsonValue wrong = JsonValue::object();
     wrong.set("format", "something-else");
-    CHECK(!patch::load(wrong, engine, surface, view, metadata).ok);
+    CHECK(!patch::load(wrong, engine, surface, panel, view, metadata).ok);
 
     // A patch referring to a node type we do not have should still open, with
     // the unknown node reported rather than silently swallowed.
@@ -786,7 +790,7 @@ void testPatchRejectsRubbish() {
     connections.push(dangling);
     root.set("connections", connections);
 
-    const PatchLoadResult result = patch::load(root, engine, surface, view, metadata);
+    const PatchLoadResult result = patch::load(root, engine, surface, panel, view, metadata);
     CHECK(result.ok);
     CHECK(engine.graph().nodeCount() == 1);
     CHECK(engine.graph().connections().empty());
@@ -1124,6 +1128,155 @@ std::shared_ptr<SampleBuffer> makeClick() {
     auto click = std::make_shared<SampleBuffer>(2, 64, 48000.0);
     for (int c = 0; c < 2; ++c) click->channelForWrite(c)[0] = 1.0f;
     return click;
+}
+
+void testSurfaceMacroRanges() {
+    TEST("one control drives several parameters over their own ranges");
+
+    BlockCounter clock{ 0 };
+    Graph graph;
+    graph.setClock(&clock);
+    graph.prepare(48000.0, 128);
+
+    auto gainOwner = std::make_unique<GainNode>();
+    auto filterOwner = std::make_unique<FilterNode>();
+    const NodeId gainId = graph.addNode(std::move(gainOwner));
+    const NodeId filterId = graph.addNode(std::move(filterOwner));
+
+    Node* gain = graph.node(gainId);
+    Node* filter = graph.node(filterId);
+    CHECK(gain != nullptr && filter != nullptr);
+
+    const ParamAddress gainAddress{ gainId, gain->indexOfParameter("gain") };
+    const ParamAddress cutoffAddress{ filterId, filter->indexOfParameter("frequency") };
+    CHECK(gainAddress.valid() && cutoffAddress.valid());
+
+    control::Surface surface;
+    const int knob = surface.add(control::ControlKind::Knob, "energy", 0, 0, 2, 2);
+    CHECK(knob != 0);
+
+    // Bound with the knob down, so the parameter's current value becomes the
+    // bottom of its range and the top is left at the extreme - which is how a
+    // macro actually gets built, rather than by typing two numbers.
+    gain->parameter(gainAddress.param).setNormalised(0.2f);
+    CHECK(surface.bind(knob, gainAddress, graph));
+    CHECK(surface.bind(knob, cutoffAddress, graph));
+
+    // The second target is deliberately given only the top half of its travel,
+    // which is the whole point of per-target ranges.
+    CHECK(surface.setTargetRange(knob, cutoffAddress, 0.5f, 1.0f));
+
+    surface.setValue(knob, 0.0f, graph);
+    CHECK_CLOSE(gain->parameter(gainAddress.param).normalised(), 0.2, 1e-5);
+    CHECK_CLOSE(filter->parameter(cutoffAddress.param).normalised(), 0.5, 1e-5);
+
+    surface.setValue(knob, 1.0f, graph);
+    CHECK_CLOSE(gain->parameter(gainAddress.param).normalised(), 1.0, 1e-5);
+    CHECK_CLOSE(filter->parameter(cutoffAddress.param).normalised(), 1.0, 1e-5);
+
+    surface.setValue(knob, 0.5f, graph);
+    CHECK_CLOSE(gain->parameter(gainAddress.param).normalised(), 0.6, 1e-5);
+    CHECK_CLOSE(filter->parameter(cutoffAddress.param).normalised(), 0.75, 1e-5);
+
+    // An inverted target runs backwards. One knob that opens a filter as it
+    // closes a gate is a real thing to want, so low above high is a setting
+    // rather than a mistake to be corrected.
+    CHECK(surface.setTargetRange(knob, gainAddress, 1.0f, 0.0f));
+    surface.setValue(knob, 0.25f, graph);
+    CHECK_CLOSE(gain->parameter(gainAddress.param).normalised(), 0.75, 1e-5);
+}
+
+void testSurfaceSurvivesReloadAndPruning() {
+    TEST("a surface reloads with its bindings, and drops the dead ones");
+
+    BlockCounter clock{ 0 };
+    Graph graph;
+    graph.setClock(&clock);
+    graph.prepare(48000.0, 128);
+
+    const NodeId gainId = graph.addNode(std::make_unique<GainNode>());
+    const NodeId filterId = graph.addNode(std::make_unique<FilterNode>());
+
+    const ParamAddress gainAddress{ gainId, graph.node(gainId)->indexOfParameter("gain") };
+    const ParamAddress cutoffAddress{ filterId,
+                                      graph.node(filterId)->indexOfParameter("frequency") };
+
+    control::Surface surface;
+    surface.setGrid(16, 10);
+
+    const int pad = surface.add(control::ControlKind::XYPad, "space", 3, 1, 4, 4);
+    CHECK(surface.bind(pad, gainAddress, graph, false));
+    CHECK(surface.bind(pad, cutoffAddress, graph, true));
+
+    const int page = surface.addPage("drums");
+    surface.setActivePage(page);
+    const int button = surface.add(control::ControlKind::Button, "kill", 0, 0, 2, 1);
+    control::Control* buttonControl = surface.find(button);
+    CHECK(buttonControl != nullptr);
+    buttonControl->momentary = true;
+
+    const std::string text = surface.toJson().dump(2);
+
+    control::Surface reloaded;
+    std::string parseError;
+    reloaded.fromJson(JsonValue::parse(text, &parseError));
+    CHECK(parseError.empty());
+
+    CHECK(reloaded.columns() == 16);
+    CHECK(reloaded.rows() == 10);
+    CHECK(reloaded.pageCount() == 2);
+
+    reloaded.setActivePage(0);
+    const control::Control* reloadedPad = reloaded.find(pad);
+    CHECK(reloadedPad != nullptr);
+    CHECK(reloadedPad->kind == control::ControlKind::XYPad);
+    CHECK(reloadedPad->targets.size() == 1);
+    CHECK(reloadedPad->targetsY.size() == 1);
+    CHECK(reloadedPad->targetsY.front().address == cutoffAddress);
+
+    reloaded.setActivePage(1);
+    const control::Control* reloadedButton = reloaded.find(button);
+    CHECK(reloadedButton != nullptr);
+    CHECK(reloadedButton->momentary);
+
+    // A control added after a reload must not collide with one that came out of
+    // the file - the id counter has to clear the highest id it read.
+    const int fresh = reloaded.add(control::ControlKind::Knob, "new", 8, 0, 2, 2);
+    CHECK(fresh != button);
+    CHECK(fresh != pad);
+
+    // Losing the node the pad was bound to costs the binding, not the control.
+    CHECK(graph.removeNode(filterId));
+    reloaded.pruneMissing(graph);
+
+    reloaded.setActivePage(0);
+    const control::Control* pruned = reloaded.find(pad);
+    CHECK(pruned != nullptr);
+    CHECK(pruned->targets.size() == 1);
+    CHECK(pruned->targetsY.empty());
+}
+
+void testSurfaceGridKeepsControlsReachable() {
+    TEST("shrinking the grid pulls controls back inside it");
+
+    control::Surface surface;
+    surface.setGrid(24, 16);
+
+    const int knob = surface.add(control::ControlKind::Knob, "far", 20, 12, 3, 3);
+
+    // A control left outside the grid is a control that cannot be seen or
+    // clicked, so it is not left there.
+    surface.setGrid(8, 6);
+
+    const control::Control* control = surface.find(knob);
+    CHECK(control != nullptr);
+    CHECK(control->column + control->width <= 8);
+    CHECK(control->row + control->height <= 6);
+
+    // The last page is never removed: every other function here would need a
+    // special case for a surface with nowhere to put a control.
+    CHECK(!surface.removePage(0));
+    CHECK(surface.pageCount() == 1);
 }
 
 void testDropFiresOnBuildRelease() {
@@ -1857,6 +2010,9 @@ int main() {
     testDropFiresOnBuildRelease();
     testDropIgnoresReleasesFromBeforeItExisted();
     testDropMuteAndManualTrigger();
+    testSurfaceMacroRanges();
+    testSurfaceSurvivesReloadAndPruning();
+    testSurfaceGridKeepsControlsReachable();
     testStemTagRouting();
     testStemRoutingPersists();
     testChainPresetRoundTrip();

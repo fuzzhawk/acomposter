@@ -67,6 +67,7 @@ void applyNodeCommon(Node& node, const JsonValue& in) {
 // ---------------------------------------------------------------------------
 
 JsonValue save(const Engine& engine, const Metasurface& metasurface,
+               const control::Surface& surface,
                const PatchViewState& view, const PatchMetadata& metadata) {
     JsonValue root = JsonValue::object();
     root.set("format", kFormatId);
@@ -114,6 +115,7 @@ JsonValue save(const Engine& engine, const Metasurface& metasurface,
     root.set("connections", connections);
 
     root.set("metasurface", metasurface.toJson());
+    root.set("surface", surface.toJson());
 
     JsonValue viewObject = JsonValue::object();
     viewObject.set("canvasX", view.canvasX);
@@ -126,9 +128,10 @@ JsonValue save(const Engine& engine, const Metasurface& metasurface,
 }
 
 bool saveToFile(const std::string& utf8Path, const Engine& engine,
-                const Metasurface& metasurface, const PatchViewState& view,
+                const Metasurface& metasurface, const control::Surface& surface,
+                const PatchViewState& view,
                 const PatchMetadata& metadata, std::string* error) {
-    const JsonValue root = save(engine, metasurface, view, metadata);
+    const JsonValue root = save(engine, metasurface, surface, view, metadata);
     return writeFileText(utf8Path, root.dump(2), error);
 }
 
@@ -137,6 +140,7 @@ bool saveToFile(const std::string& utf8Path, const Engine& engine,
 // ---------------------------------------------------------------------------
 
 PatchLoadResult load(const JsonValue& root, Engine& engine, Metasurface& metasurface,
+                     control::Surface& surface,
                      PatchViewState& view, PatchMetadata& metadata) {
     PatchLoadResult result;
 
@@ -248,6 +252,16 @@ PatchLoadResult load(const JsonValue& root, Engine& engine, Metasurface& metasur
         metasurface.pruneMissing(graph);
     }
 
+    // -- control surface ---------------------------------------------------
+    // Cleared either way: a patch without a surface has to open with an empty
+    // one rather than with the last patch's layout still bound to node ids that
+    // now mean something else entirely.
+    surface.clear();
+    if (const JsonValue* surfaceObject = root.find("surface")) {
+        surface.fromJson(*surfaceObject);
+        surface.pruneMissing(graph);
+    }
+
     if (const JsonValue* viewObject = root.find("view")) {
         view.canvasX = viewObject->getFloat("canvasX", 0.0f);
         view.canvasY = viewObject->getFloat("canvasY", 0.0f);
@@ -260,8 +274,8 @@ PatchLoadResult load(const JsonValue& root, Engine& engine, Metasurface& metasur
 }
 
 PatchLoadResult loadFromFile(const std::string& utf8Path, Engine& engine,
-                             Metasurface& metasurface, PatchViewState& view,
-                             PatchMetadata& metadata) {
+                             Metasurface& metasurface, control::Surface& surface,
+                             PatchViewState& view, PatchMetadata& metadata) {
     PatchLoadResult result;
 
     std::string text;
@@ -274,7 +288,7 @@ PatchLoadResult loadFromFile(const std::string& utf8Path, Engine& engine,
         return result;
     }
 
-    return load(root, engine, metasurface, view, metadata);
+    return load(root, engine, metasurface, surface, view, metadata);
 }
 
 // ---------------------------------------------------------------------------
