@@ -166,6 +166,7 @@ private:
     void drawStemMatrix(Ui& ui, StemPlayerNode& stems, const Rect& bounds);
     void drawColorBody(Ui& ui, Node& node, const Rect& body);
     void drawBuildBody(Ui& ui, Node& node, const Rect& body);
+    void drawDropBody(Ui& ui, Node& node, const Rect& body);
     void drawLooperBody(Ui& ui, Node& node, const Rect& body);
     void drawMixerBody(Ui& ui, Node& node, const Rect& body);
     void drawCrossfaderBody(Ui& ui, Node& node, const Rect& body);

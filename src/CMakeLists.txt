@@ -24,6 +24,7 @@ set(ACOMPOSTER_CORE_SOURCES
     nodes/BuildNode.cpp
     nodes/ColorNode.cpp
     nodes/CrossfaderNode.cpp
+    nodes/DropNode.cpp
     nodes/IoNodes.cpp
     nodes/LooperNode.cpp
     nodes/MixerNode.cpp

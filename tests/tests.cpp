@@ -20,6 +20,7 @@
 #include "../src/library/ChainPreset.h"
 #include "../src/library/Library.h"
 #include "../src/nodes/BuildNode.h"
+#include "../src/nodes/DropNode.h"
 #include "../src/nodes/ColorNode.h"
 #include "../src/nodes/NodeFactory.h"
 #include "../src/nodes/StemPlayerNode.h"
@@ -1100,6 +1101,193 @@ void testBuildTrimStaysValid() {
     CHECK(build.trimEnd() <= 1.0f);
 }
 
+// Captures the loudest sample it was handed, so "did that fire" is one number.
+class PeakProbeNode : public Node {
+public:
+    PeakProbeNode() : Node("test.peak", NodeCategory::Analysis) { addInput("in", 2); }
+    void process(ProcessContext& ctx) override {
+        peak = 0.0f;
+        peakFrame = -1;
+        const AudioBus& in = ctx.input(0);
+        for (int c = 0; c < in.numChannels; ++c) {
+            for (int f = 0; f < ctx.frames; ++f) {
+                const float level = std::fabs(in.chan(c)[f]);
+                if (level > peak) { peak = level; peakFrame = f; }
+            }
+        }
+    }
+    float peak = 0.0f;
+    int peakFrame = -1;
+};
+
+std::shared_ptr<SampleBuffer> makeClick() {
+    auto click = std::make_shared<SampleBuffer>(2, 64, 48000.0);
+    for (int c = 0; c < 2; ++c) click->channelForWrite(c)[0] = 1.0f;
+    return click;
+}
+
+void testDropFiresOnBuildRelease() {
+    TEST("the drop lands on the grid line the build released to");
+
+    BlockCounter clock{ 0 };
+    Graph graph;
+    graph.setClock(&clock);
+    graph.prepare(48000.0, 128);
+
+    auto buildOwner = std::make_unique<BuildNode>();
+    BuildNode* build = buildOwner.get();
+    auto dropOwner = std::make_unique<DropNode>();
+    DropNode* drop = dropOwner.get();
+    auto probeOwner = std::make_unique<PeakProbeNode>();
+    PeakProbeNode* probe = probeOwner.get();
+
+    const NodeId buildId = graph.addNode(std::move(buildOwner));
+    const NodeId dropId = graph.addNode(std::move(dropOwner));
+    const NodeId probeId = graph.addNode(std::move(probeOwner));
+    CHECK(graph.connect(dropId, 0, probeId, 0) != kInvalidConnection);
+
+    drop->setBuildNode(buildId);
+    drop->setLayer(0, makeClick(), "click");
+
+    TransportState transport;
+    transport.sampleRate = 48000.0;
+    transport.bpm = 120.0;
+    transport.playing = true;
+
+    // 120 bpm at 48 kHz is 24000 frames to the beat. Start 200 frames short of
+    // beat 1 so the release is asked for several blocks before it happens,
+    // which is what "let go early, land on the grid" actually looks like.
+    constexpr double kFramesPerBeat = 24000.0;
+    constexpr int kFramesEarly = 200;
+    transport.ppqPosition = 1.0 - kFramesEarly / kFramesPerBeat;
+
+    const auto step = [&](int frames) {
+        graph.render(transport, frames, 0, nullptr, nullptr);
+        transport.ppqPosition += static_cast<double>(frames) / kFramesPerBeat;
+        return probe->peak;
+    };
+
+    build->parameter(build->indexOfParameter("release")).setValue(1.0f);   // next beat
+
+    // Engaging is not a drop. A node that fired on the way up would be firing
+    // at the start of the build rather than at the end of it.
+    build->parameter(build->indexOfParameter(BuildNode::kEngageParam)).setValue(1.0f);
+    CHECK(step(64) < 1.0e-6f);
+
+    // Let go, 200 frames before the beat. Nothing should sound yet: the drop
+    // has been told when, not told to go.
+    build->parameter(build->indexOfParameter(BuildNode::kEngageParam)).setValue(0.0f);
+    CHECK(step(64) < 1.0e-6f);   // the release block itself, 136 frames early
+    CHECK(step(64) < 1.0e-6f);   // 72 frames early
+
+    // The block that contains the beat is the one that speaks - and it speaks
+    // 8 frames in, not at the top of the block. Landing on the block boundary
+    // instead would put the impact up to a buffer's length off the beat, which
+    // at 512 frames is 10 ms and audible.
+    graph.render(transport, 64, 0, nullptr, nullptr);
+    CHECK(probe->peak > 0.5f);
+    CHECK(probe->peakFrame == 8);
+    transport.ppqPosition += 64.0 / kFramesPerBeat;
+
+    // And it fires once. The build holds "released but not yet at the line" for
+    // every block in between, so an announcement made on that condition rather
+    // than on its edge would fire the drop once per block.
+    CHECK(step(64) < 1.0e-6f);
+    CHECK(step(64) < 1.0e-6f);
+}
+
+void testDropIgnoresReleasesFromBeforeItExisted() {
+    TEST("a drop added after a build has run does not fire on its history");
+
+    BlockCounter clock{ 0 };
+    Graph graph;
+    graph.setClock(&clock);
+    graph.prepare(48000.0, 128);
+
+    auto buildOwner = std::make_unique<BuildNode>();
+    BuildNode* build = buildOwner.get();
+    const NodeId buildId = graph.addNode(std::move(buildOwner));
+
+    TransportState transport;
+    transport.sampleRate = 48000.0;
+    transport.bpm = 120.0;
+    transport.playing = true;
+
+    build->parameter(build->indexOfParameter("release")).setValue(2.0f);
+
+    // A whole build runs through before the drop node exists at all.
+    build->parameter(build->indexOfParameter(BuildNode::kEngageParam)).setValue(1.0f);
+    graph.render(transport, 64, 0, nullptr, nullptr);
+    build->parameter(build->indexOfParameter(BuildNode::kEngageParam)).setValue(0.0f);
+    graph.render(transport, 64, 0, nullptr, nullptr);
+
+    auto dropOwner = std::make_unique<DropNode>();
+    DropNode* drop = dropOwner.get();
+    auto probeOwner = std::make_unique<PeakProbeNode>();
+    PeakProbeNode* probe = probeOwner.get();
+
+    const NodeId dropId = graph.addNode(std::move(dropOwner));
+    const NodeId probeId = graph.addNode(std::move(probeOwner));
+    CHECK(graph.connect(dropId, 0, probeId, 0) != kInvalidConnection);
+
+    drop->setBuildNode(buildId);
+    drop->setLayer(0, makeClick(), "click");
+
+    // The release counter is already non-zero. Firing on it would mean a drop
+    // node added to a patch mid-set going off the instant it was created.
+    graph.render(transport, 64, 0, nullptr, nullptr);
+    CHECK(probe->peak < 1.0e-6f);
+
+    // But the next release still reaches it. Two blocks, because the graph is
+    // free to schedule the drop ahead of the build - there is no audio
+    // connection between them to order it - in which case the announcement is
+    // seen on the following block.
+    build->parameter(build->indexOfParameter(BuildNode::kEngageParam)).setValue(1.0f);
+    graph.render(transport, 64, 0, nullptr, nullptr);
+    build->parameter(build->indexOfParameter(BuildNode::kEngageParam)).setValue(0.0f);
+
+    float peak = 0.0f;
+    for (int block = 0; block < 2; ++block) {
+        graph.render(transport, 64, 0, nullptr, nullptr);
+        peak = std::max(peak, probe->peak);
+    }
+    CHECK(peak > 0.5f);
+}
+
+void testDropMuteAndManualTrigger() {
+    TEST("a muted layer stays silent, and the manual trigger works alone");
+
+    BlockCounter clock{ 0 };
+    Graph graph;
+    graph.setClock(&clock);
+    graph.prepare(48000.0, 128);
+
+    auto dropOwner = std::make_unique<DropNode>();
+    DropNode* drop = dropOwner.get();
+    auto probeOwner = std::make_unique<PeakProbeNode>();
+    PeakProbeNode* probe = probeOwner.get();
+
+    const NodeId dropId = graph.addNode(std::move(dropOwner));
+    const NodeId probeId = graph.addNode(std::move(probeOwner));
+    CHECK(graph.connect(dropId, 0, probeId, 0) != kInvalidConnection);
+
+    drop->setLayer(0, makeClick(), "click");
+
+    TransportState transport;
+    transport.sampleRate = 48000.0;
+
+    // No build wired at all: the button still has to work, or a drop node
+    // cannot be balanced before it is patched.
+    drop->trigger();
+    graph.render(transport, 64, 0, nullptr, nullptr);
+    CHECK(probe->peak > 0.5f);
+
+    drop->parameter(drop->indexOfParameter("aMute")).setValue(1.0f);
+    drop->trigger();
+    graph.render(transport, 64, 0, nullptr, nullptr);
+    CHECK(probe->peak < 1.0e-6f);
+}
+
 void testStemTagRouting() {
     TEST("a stem's tag decides its output until it is pinned");
 
@@ -1666,6 +1854,9 @@ int main() {
     testLibrarySurvivesBadEntry();
     testStemSnippetExtraction();
     testBuildTrimStaysValid();
+    testDropFiresOnBuildRelease();
+    testDropIgnoresReleasesFromBeforeItExisted();
+    testDropMuteAndManualTrigger();
     testStemTagRouting();
     testStemRoutingPersists();
     testChainPresetRoundTrip();

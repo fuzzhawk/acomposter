@@ -78,6 +78,27 @@ public:
     // 0..1 through the build, for the UI.
     float progress() const noexcept { return progress_.load(std::memory_order_relaxed); }
 
+    // -- the drop ----------------------------------------------------------
+    // When the build last let go, as a transport position, and a counter that
+    // steps with it.
+    //
+    // Published rather than pushed because the drop node has to fire on the
+    // frame the build released, and the two nodes run in whatever order the
+    // schedule puts them in. A musical position is absolute, so a drop node
+    // scheduled before the build still lands on the right frame - it simply
+    // sees the event in the following block and offsets into it. A boolean or a
+    // callback would be a block late or a block early depending on the wiring.
+    struct ReleaseEvent {
+        std::uint32_t count = 0;
+        double ppq = 0.0;
+    };
+    ReleaseEvent lastRelease() const noexcept {
+        ReleaseEvent event;
+        event.count = releaseCount_.load(std::memory_order_acquire);
+        event.ppq = releasePpq_.load(std::memory_order_relaxed);
+        return event;
+    }
+
     // -- Node --------------------------------------------------------------
     void prepare(const PrepareInfo& info) override;
     void reset() override;
@@ -152,6 +173,16 @@ private:
 
     std::atomic<bool> engaged_{ false };
     std::atomic<float> progress_{ 0.0f };
+
+    // Written by the audio thread at the instant the build lets go. The ppq goes
+    // out first and the count second, so a reader that sees a new count is
+    // guaranteed to see the position that belongs to it.
+    std::atomic<std::uint32_t> releaseCount_{ 0 };
+    std::atomic<double> releasePpq_{ 0.0 };
+    void publishRelease(double ppq) noexcept {
+        releasePpq_.store(ppq, std::memory_order_relaxed);
+        releaseCount_.fetch_add(1, std::memory_order_release);
+    }
 
     // Published by the audio thread each block so the message thread drives the
     // targets from the same musical position the riser is being read at.

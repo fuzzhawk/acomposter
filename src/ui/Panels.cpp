@@ -5,6 +5,7 @@
 #include "../core/FileIo.h"
 #include "../patch/Patch.h"
 #include "../nodes/BuildNode.h"
+#include "../nodes/DropNode.h"
 #include "../nodes/ColorNode.h"
 #include "../nodes/StemPlayerNode.h"
 #include "../vst2/VstNode.h"
@@ -878,6 +879,61 @@ void InspectorView::drawBuildSection(Ui& ui, Rect& area, Node& node) {
                                                         : pathLeaf(build->riserPath()));
 }
 
+void InspectorView::drawDropSection(Ui& ui, Rect& area, Node& node) {
+    auto* drop = dynamic_cast<DropNode*>(&node);
+    if (!drop || !engine_) return;
+
+    const Theme& t = theme();
+
+    ui.separator(area.removeFromTop(t.scaled(9.0f)));
+    ui.label(area.removeFromTop(t.scaled(18.0f)), "drop", t.textDim, t.fontUiBold);
+    area.removeFromTop(t.scaled(3.0f));
+
+    // Which build fires it. Same shape as the build node's own pickers, and
+    // salted with its own constant for the same reason theirs are.
+    Rect buildRow = area.removeFromTop(t.scaled(20.0f));
+    ui.label(buildRow.removeFromLeft(t.scaled(52.0f)), "build", t.textFaint, t.fontSmall);
+
+    std::vector<std::string> names{ "none" };
+    std::vector<NodeId> ids{ kInvalidNode };
+    int selected = 0;
+
+    for (const auto& candidate : engine_->graph().nodes()) {
+        if (candidate->typeName() != "build") continue;
+        if (candidate->id() == drop->buildNode()) selected = static_cast<int>(ids.size());
+        names.push_back(candidate->name());
+        ids.push_back(candidate->id());
+    }
+
+    if (ui.combo(ui.idFrom(&node, 970), buildRow, names, selected)
+        && selected >= 0 && selected < static_cast<int>(ids.size()))
+        drop->setBuildNode(ids[static_cast<std::size_t>(selected)]);
+
+    area.removeFromTop(t.scaled(4.0f));
+
+    // The three layers by file name, with a way to clear one. Loading is done
+    // by dropping a file on the node, which is where the layer is visible.
+    for (int i = 0; i < DropNode::kLayers; ++i) {
+        if (area.height < t.scaled(20.0f)) break;
+
+        Rect row = area.removeFromTop(t.scaled(18.0f));
+
+        if (!drop->layerPath(i).empty()) {
+            const Rect clearArea = row.removeFromRight(t.scaled(18.0f));
+            if (ui.iconButton(ui.idFrom(&node, 980 + i), clearArea, Ui::Icon::Cross, t.textFaint))
+                drop->clearLayer(i);
+        }
+
+        ui.label(row.removeFromLeft(t.scaled(52.0f)),
+                 i == 0 ? "impact" : i == 1 ? "air" : "body", t.textFaint, t.fontSmall);
+        ui.draw().addTextClipped(ui.font(t.fontSmall), row,
+                                 drop->layerPath(i).empty() ? t.textFaint : t.textDim,
+                                 drop->layerPath(i).empty() ? "empty"
+                                                            : pathLeaf(drop->layerPath(i)));
+        area.removeFromTop(t.scaled(2.0f));
+    }
+}
+
 void InspectorView::render(Ui& ui, const Rect& bounds, NodeId nodeId) {
     const Theme& t = theme();
 
@@ -933,6 +989,7 @@ void InspectorView::render(Ui& ui, const Rect& bounds, NodeId nodeId) {
     drawStemChains(ui, area, *node);
     drawColorSection(ui, area, *node);
     drawBuildSection(ui, area, *node);
+    drawDropSection(ui, area, *node);
 
     // -- comment -----------------------------------------------------------
     ui.separator(area.removeFromTop(t.scaled(9.0f)));

@@ -1,6 +1,7 @@
 #include "NodeFactory.h"
 
 #include "BuildNode.h"
+#include "DropNode.h"
 #include "ColorNode.h"
 #include "CrossfaderNode.h"
 #include "IoNodes.h"
@@ -110,6 +111,11 @@ void registerBuiltinNodes() {
         "colour, then drops back on the grid.",
         NodeCategory::Effect, "Controllers", 20,
         [] { return std::make_unique<BuildNode>(); });
+
+    add("drop", "Drop",
+        "Three samples fired as one impact, on the frame the build lets go.",
+        NodeCategory::Source, "Controllers", 30,
+        [] { return std::make_unique<DropNode>(); });
 
     // -- mixing ------------------------------------------------------------
 

@@ -275,15 +275,33 @@ void BuildNode::process(ProcessContext& ctx) {
         startPpq_ = transport.ppqPosition;
         riserPosition_ = 0.0;
         riserPlaying_ = true;
-    } else if (!wanted && running_) {
+    } else if (!wanted && running_ && !releasePending_) {
+        // `!wanted && running_` stays true for every block between letting go
+        // and the grid line arriving, so this has to be guarded on the pending
+        // flag. Without it the release was announced once per block, and a drop
+        // node listening fired on each announcement in turn.
         // Letting go slightly early should still land on the grid, so the
         // release is deferred to the next line unless it is set to immediate.
+        //
+        // The position is published here, when the release is *asked for*,
+        // rather than below when it happens. Anything listening - the drop node
+        // - may be scheduled ahead of this one, in which case it would see an
+        // already-past event and be a whole block late. Announcing the grid
+        // line in advance means it can wait exactly the right number of frames
+        // whichever order the two run in.
+        const double firstPrevious = transport.ppqPosition - beatsPerFrame;
+        const double line = release == Release::NextBar
+            ? (std::floor(firstPrevious / beatsPerBar) + 1.0) * beatsPerBar
+            : std::floor(firstPrevious) + 1.0;
+
         if (release == Release::Immediate) {
             running_ = false;
             riserPlaying_ = false;
             releasePending_ = false;
+            publishRelease(transport.ppqPosition);
         } else {
             releasePending_ = true;
+            publishRelease(line);
         }
     }
 

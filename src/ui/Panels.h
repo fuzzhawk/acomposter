@@ -99,6 +99,7 @@ private:
     void drawStemSection(Ui& ui, Rect& area, Node& node);
     void drawStemChains(Ui& ui, Rect& area, Node& node);
     void drawBuildSection(Ui& ui, Rect& area, Node& node);
+    void drawDropSection(Ui& ui, Rect& area, Node& node);
     void drawColorSection(Ui& ui, Rect& area, Node& node);
 
     Engine* engine_ = nullptr;

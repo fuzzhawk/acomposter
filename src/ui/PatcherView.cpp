@@ -7,6 +7,7 @@
 #include "../nodes/MixerNode.h"
 #include "../nodes/NodeFactory.h"
 #include "../nodes/BuildNode.h"
+#include "../nodes/DropNode.h"
 #include "../nodes/ColorNode.h"
 #include "../nodes/SamplePlayerNode.h"
 #include "../nodes/StemPlayerNode.h"
@@ -149,6 +150,7 @@ float PatcherView::nodeWidth(const Node& node) const {
     }
     if (node.typeName() == "color") return 260.0f;
     if (node.typeName() == "build") return 320.0f;
+    if (node.typeName() == "drop") return 250.0f;
     if (node.typeName().rfind("mixer.", 0) == 0) {
         const auto* mixer = static_cast<const MixerNode*>(&node);
         return clampValue(46.0f * static_cast<float>(mixer->channelCount()) + 20.0f, 180.0f, 780.0f);
@@ -171,6 +173,7 @@ float PatcherView::nodeHeight(const Node& node) const {
     else if (type == "stem.player") bodyHeight = 360.0f;
     else if (type == "color") bodyHeight = 132.0f;
     else if (type == "build") bodyHeight = 292.0f;
+    else if (type == "drop") bodyHeight = 192.0f;
     else if (type == "looper") bodyHeight = 116.0f;
     else if (type == "crossfader") bodyHeight = 92.0f;
     else if (type.rfind("mixer.", 0) == 0) bodyHeight = 132.0f;
@@ -1006,6 +1009,7 @@ void PatcherView::drawNodeBody(Ui& ui, Node& node, const Rect& body) {
     if (type == "stem.player") { drawStemPlayerBody(ui, node, body); return; }
     if (type == "color") { drawColorBody(ui, node, body); return; }
     if (type == "build") { drawBuildBody(ui, node, body); return; }
+    if (type == "drop") { drawDropBody(ui, node, body); return; }
     if (type == "looper") { drawLooperBody(ui, node, body); return; }
     if (type == "crossfader") { drawCrossfaderBody(ui, node, body); return; }
     if (type.rfind("mixer.", 0) == 0) { drawMixerBody(ui, node, body); return; }
@@ -2016,6 +2020,98 @@ void PatcherView::drawBuildBody(Ui& ui, Node& node, const Rect& body) {
         && area.height >= s * 14.0f) {
         list.addTextClipped(ui.font(t.fontSmall), area.removeFromTop(s * 14.0f), t.textFaint,
                             "not wired - pick targets in the inspector",
+                            DrawList::Align::Centre);
+    }
+}
+
+void PatcherView::drawDropBody(Ui& ui, Node& node, const Rect& body) {
+    const float s = bodyScale();
+    const Theme& t = theme();
+    DrawList& list = ui.draw();
+    auto& drop = static_cast<DropNode&>(node);
+
+    Rect area = body;
+
+    // -- fire --------------------------------------------------------------
+    // A drop node wired to a build is fired by the build; this button is for
+    // hearing the impact while it is being balanced, which is the only time
+    // anyone wants to trigger one by hand.
+    Rect fireArea = area.removeFromTop(s * 30.0f).deflated(s * 2.0f);
+
+    bool fireHovered = false, fireHeld = false;
+    const UiId fireId = ui.idFrom(&node, 700);
+    if (ui.buttonBehaviour(fireId, fireArea, fireHovered, fireHeld)) drop.trigger();
+
+    const float progress = drop.progress();
+    const bool sounding = progress >= 0.0f;
+
+    Colour fill = sounding ? t.warning.withAlpha(0.30f) : t.widgetBackground;
+    if (fireHovered) fill = fill.brightened(1.4f);
+    list.addRectFilled(fireArea, fill, t.cornerRadius);
+    list.addRect(fireArea, sounding ? t.warning : t.border, 1.0f, t.cornerRadius);
+    list.addTextClipped(ui.font(t.fontUiBold), fireArea, sounding ? t.text : t.textDim,
+                        "fire", DrawList::Align::Centre);
+    if (fireHovered) ui.setTooltip("Fire every layer now. The build fires it in performance.");
+
+    area.removeFromTop(s * 5.0f);
+
+    // -- layers ------------------------------------------------------------
+    for (int i = 0; i < DropNode::kLayers; ++i) {
+        if (area.height < s * 24.0f) break;
+
+        // Tall enough for a button: a control's label needs its font height
+        // plus the padding the button style puts around it, and 13 units of row
+        // clipped the mute's "m" to a bare box.
+        Rect row = area.removeFromTop(s * 40.0f);
+        list.addRectFilled(row, t.panelSunken, 2.0f);
+
+        // Dropping a file on a layer is the obvious gesture, and it is how the
+        // three get filled in: three drags, no dialogs.
+        if (ui.acceptDrop(row, "file")) drop.loadLayer(i, ui.dragPayload(), nullptr);
+
+        Rect inner = row.deflated(s * 3.0f);
+        Rect nameRow = inner.removeFromTop(s * 19.0f);
+
+        const Rect muteArea = nameRow.removeFromRight(s * 18.0f);
+        Parameter& mute = node.parameter(node.indexOfParameter(
+            std::string(i == 0 ? "a" : i == 1 ? "b" : "c") + "Mute"));
+        const bool muted = mute.boolValue();
+        // An icon rather than a letter: a one-character label inside a button
+        // the width of a fader thumb has less room for its glyph than the glyph
+        // needs, and came out as an ellipsis. An icon is drawn to fit the rect.
+        if (ui.iconButton(ui.idFrom(&node, 720 + i), muteArea, Ui::Icon::Power,
+                          muted ? t.danger : t.textFaint, muted))
+            mute.setValue(muted ? 0.0f : 1.0f);
+        if (ui.isHot(ui.idFrom(&node, 720 + i)))
+            ui.setTooltip(muted ? "Muted - this layer stays out of the impact"
+                                : "Mute this layer");
+
+        const std::string name = drop.layerName(i);
+        list.addTextClipped(ui.font(t.fontSmall), nameRow,
+                            name.empty() ? t.textFaint : (muted ? t.textFaint : t.textDim),
+                            name.empty() ? "drop a sample here" : name);
+
+        if (inner.height < s * 14.0f) continue;
+
+        // Gain and pitch side by side: the two that get moved while listening.
+        Rect controls = inner.removeFromTop(s * 14.0f);
+        const std::string prefix = i == 0 ? "a" : i == 1 ? "b" : "c";
+
+        ui.parameterSlider(controls.removeFromLeft(controls.width * 0.5f - s * 2.0f),
+                           node.parameter(node.indexOfParameter(prefix + "Gain")),
+                           t.accent, false);
+        controls.removeFromLeft(s * 4.0f);
+        ui.parameterSlider(controls, node.parameter(node.indexOfParameter(prefix + "Pitch")),
+                           t.control, false);
+
+        area.removeFromTop(s * 3.0f);
+    }
+
+    // A drop with no build behind it never fires on its own, which is worth
+    // saying on the node rather than leaving to be discovered mid-set.
+    if (drop.buildNode() == kInvalidNode && area.height >= s * 13.0f) {
+        list.addTextClipped(ui.font(t.fontSmall), area.removeFromTop(s * 13.0f), t.textFaint,
+                            "no build wired - pick one in the inspector",
                             DrawList::Align::Centre);
     }
 }
