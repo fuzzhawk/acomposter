@@ -925,6 +925,11 @@ void Application::newPatch() {
     patchMetadata_ = PatchMetadata{};
     modified_ = false;
 
+    // The claims went with the patch. Keeping them would leave the set holding
+    // node ids that now belong to different nodes, and the next reconciliation
+    // would release parameters on this patch that it never took.
+    colourExclusions_.clear();
+
     patcher_.clearSelection();
     patcher_.resetView();
     updateWindowTitle();
