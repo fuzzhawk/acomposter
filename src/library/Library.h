@@ -139,6 +139,8 @@ public:
 private:
     std::string entryPath(const std::string& id) const;
     std::string makeUniqueId(const std::string& from) const;
+    // A display name no other entry of the same kind is already using.
+    std::string uniqueName(EntryKind kind, const std::string& from) const;
     static Entry fromJson(const JsonValue& value);
     static JsonValue toJson(const Entry& entry);
 

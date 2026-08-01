@@ -77,6 +77,24 @@ std::string Library::makeUniqueId(const std::string& from) const {
     return base + "-x";
 }
 
+std::string Library::uniqueName(EntryKind kind, const std::string& from) const {
+    // The id is already unique, but the id is not what the list shows. Three
+    // entries all reading "new song" are three entries nobody can tell apart,
+    // and the one being renamed is a guess.
+    const auto taken = [&](const std::string& candidate) {
+        for (const Entry& entry : entries_)
+            if (entry.kind == kind && entry.name == candidate) return true;
+        return false;
+    };
+
+    if (!taken(from)) return from;
+    for (int suffix = 2; suffix < 10000; ++suffix) {
+        const std::string candidate = from + " " + std::to_string(suffix);
+        if (!taken(candidate)) return candidate;
+    }
+    return from;
+}
+
 bool Library::open(const std::string& utf8RootDirectory, int* outSkipped) {
     if (outSkipped) *outSkipped = 0;
     if (utf8RootDirectory.empty()) return false;
@@ -157,7 +175,7 @@ std::string Library::create(EntryKind kind, const std::string& name) {
     Entry entry;
     entry.id = makeUniqueId(name.empty() ? std::string(toString(kind)) : name);
     entry.kind = kind;
-    entry.name = name.empty() ? entry.id : name;
+    entry.name = name.empty() ? entry.id : uniqueName(kind, name);
 
     entries_.push_back(entry);
     save(entry.id);

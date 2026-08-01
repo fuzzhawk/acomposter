@@ -990,8 +990,23 @@ void testLibraryRoundTrip() {
         CHECK(lib.addFile(song, "C:\\stems\\drums.wav"));
         CHECK(lib.find(song)->files.size() == 1);
 
+        // The same name twice: unique ids are not enough, because the list
+        // shows the name. A project may still use the name a song has - they
+        // are different lists.
+        const std::string second = lib.create(library::EntryKind::Song, "Night Drive");
+        CHECK(second != song);
+        CHECK(lib.find(second)->name == "Night Drive 2");
+        const std::string third = lib.create(library::EntryKind::Song, "Night Drive");
+        CHECK(lib.find(third)->name == "Night Drive 3");
+        CHECK(lib.remove(second));
+        CHECK(lib.remove(third));
+
         const std::string project = lib.create(library::EntryKind::Project, "Album One");
         CHECK(lib.addMember(project, song));
+        CHECK(lib.find(project)->name == "Album One");
+        const std::string sameName = lib.create(library::EntryKind::Project, "Night Drive");
+        CHECK(lib.find(sameName)->name == "Night Drive");
+        CHECK(lib.remove(sameName));
     }
 
     // Re-opened from disk in a fresh object: this is the property that matters,

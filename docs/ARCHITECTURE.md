@@ -291,3 +291,64 @@ scheduled against everything else on the machine.
 
 The master bus ends in a soft `tanh` ceiling, on by default. A patch with a
 runaway feedback loop should not be able to destroy a PA.
+
+---
+
+## Cross-node events, as musical positions
+
+The build node releases and the drop node fires. The obvious implementation - a
+call, or a flag the drop node polls - is wrong here, because the graph's
+topological sort is free to schedule the two in either order and the correct
+answer must not depend on which it chose.
+
+So nothing is called. The build node *publishes the transport position it
+released at*, and the drop node reads that position and works out where in its
+own block the impact belongs. A drop node scheduled before the build simply sees
+the event in the next block and offsets into it, landing on the frame the build
+actually let go rather than a block early. A musical position is the one quantity
+that means the same thing in both orders.
+
+The offset is rounded rather than truncated. Truncating put every impact one
+frame early, which is inaudible on its own and audible as a smeared transient
+when three layers do it together.
+
+The same channel carries the build's progress to the colour node, which is why
+building pushes the colour toward blue without either node knowing about the
+other.
+
+## The control surface and its server
+
+The surface is a model (`control::Surface`) that both the Control tab and the
+web page render. There is deliberately only one: a second layout model for the
+network client would be a second thing to keep in step, and it would drift.
+
+Positions are grid cells rather than pixels, because a layout has to be right on
+the machine it was built on, on a projector, and on a tablet, and a pixel layout
+is right on exactly one of those.
+
+The server runs on its own thread and never touches the graph. A value arriving
+from a client is queued and applied on the message thread by the same call the
+local knob makes, so there is exactly one path into a parameter and the audio
+thread's assumptions hold whatever is driving it. The resulting layout goes back
+out to every *other* client - never to the one that sent it, which would fight
+its own finger.
+
+HTTP, the WebSocket handshake, the frame codec and SHA-1 are all in `src/net`,
+for the same reason everything else here is: a performance tool that cannot be
+built five years from now because a dependency moved is not one worth building.
+
+## The library
+
+A directory of small JSON files - one per song, project or asset - rather than a
+database. The trade is deliberate and worth restating because migrating it later
+would mean migrating the user's own data: a corrupt or half-written file costs
+one entry instead of the library, two machines merge by copying files, and every
+record can be read and repaired in a text editor.
+
+Membership is recorded on the entry rather than by where a file sits, so a song
+belongs to as many projects as it likes. Running order is the exception: it lives
+on the project's member list, because a song in three projects has three
+positions and no field on the song could hold them.
+
+Nothing in the library owns audio. An entry references a path; deleting an entry
+deletes the entry.

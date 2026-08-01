@@ -2,8 +2,10 @@
 
 An AV patching and performance environment for Windows 10. Node-based patcher,
 sample players and loopers, mixers and crossfaders, VST2 hosting for both 32-
-and 64-bit plugins, and a metasurface that re-poses the whole patch with one
-gesture.
+and 64-bit plugins, a metasurface that re-poses the whole patch with one
+gesture, a stem player with per-stem effect racks, a control surface that also
+serves itself to a tablet, and a librarian that will analyse, classify, slice
+and rebuild a folder of samples.
 
 Built with no third-party libraries at all. Direct3D 11, Win32, WASAPI and
 ASIO are the only things it stands on; the interface, the font rasteriser, the
@@ -129,6 +131,21 @@ snaps to a section instead of trying to average two.
 
 Eight stems, sixteen sections, one stereo output per stem plus a summed pair.
 
+Each stem carries a **tag** - drums, bass, vocals, whatever the palette holds -
+and the tag decides where the stem comes out. Tagging a file routes it, so the
+same tags always land on the same outputs whatever order the stems were dropped
+in and whatever the exporter called them. The routing matrix ("routing >" on the
+node) shows the whole assignment at once and lets any stem be forced to any
+output when a song wants something the tags would not do.
+
+### Stem browser
+
+The Stems tab is where a song is prepared rather than performed: drop the folder
+an exporter produced, and every file in it is auditioned, tagged from its name,
+and laid out ready to load as a set. Tags are editable in place - name, output
+slot and colour - and a stem can be sent to a player, to a project, or straight
+onto the canvas.
+
 ### Per-stem effect racks
 
 Each stem output can carry its own chain of plugins, built from the inspector:
@@ -143,6 +160,19 @@ engine's existing addressing reaches these plugins with no changes at all. They
 are visible on the canvas, which for a patcher is arguably where they belong,
 and you can still re-patch them by hand if a song wants something the automatic
 wiring would not do.
+
+A rack can be **saved under a name and put back on any stem**, plugin state and
+all - a chain that arrives at its defaults is a list of plugin names, not a
+sound. Loading one tears the existing rack down first, because applying a preset
+means the stem sounds like the preset rather than like the preset stacked on
+whatever was there, and any plugin the preset names that this machine does not
+have is reported rather than quietly skipped. A rack can also be copied from one
+stem to another in two presses. Right-click a stem's output port on the canvas
+to open that rack.
+
+Tags carry a **default rack**, so tagging a stem "drums" can offer to build the
+chain that always goes on drums. Offered rather than done: loading four plugins
+takes a moment, and a mistagged file should not silently instantiate them.
 
 ### Colour
 
@@ -171,12 +201,115 @@ and would break silently on the next update, writing a reverb's decay into its
 mix control in the middle of a set. Capturing the ends from the plugin's own
 interface works with any of them, and keeps working.
 
-### Build
+**Colour presets** are the compromise between those two positions. A preset
+names only parameters - no node, no plugin - and binds by name across everything
+on the graph: a preset that drives "Frequency", "Mix" and "Decay" reaches
+whichever filter and reverb are on the rack, and reaches them on all eight stems
+at once. Four ship, one per instrument family. They will bind partially, they
+say exactly which targets they could not find, and the ends are still worth
+re-capturing by ear - which is what the capture buttons are for.
 
-A momentary switch that takes a section apart. Held, it shortens the stem loop
-step by step, runs a riser, pushes the colour toward blue and drops the low end.
-Released, it returns on the next grid line rather than instantly, so letting go
-slightly early still lands the drop in time.
+### Build and drop
+
+**Build** is a momentary switch that takes a section apart. Held, it shortens the
+stem loop step by step, runs a riser, pushes the colour toward blue and drops the
+low end. Released, it returns on the next grid line rather than instantly, so
+letting go slightly early still lands the drop in time.
+
+**Drop** is the impact on the other side of it: three samples fired as one, on
+the frame the build lets go. A drop is almost never one sound - a kick for the
+weight, a crash or reverse cymbal for the air, and something sustained
+underneath - and the three have to start together to read as one hit. Each layer
+has its own gain, pitch, start offset and reverse.
+
+The trigger travels as a *musical position* rather than a call, so the two nodes
+work in whichever order the graph's schedule puts them: a drop node scheduled
+before the build sees the event in the next block and offsets into it, landing on
+the frame the build actually released. There is a manual trigger too, so the node
+is useful on its own.
+
+### Control surface
+
+A patch of any size has hundreds of parameters and about eight that matter once
+the set starts. The Control tab (`F2`) is where those eight go: knobs, faders,
+buttons, X-Y pads and the metasurface itself, placed on a grid and sized in
+cells rather than pixels - so a layout built on a laptop is still right on a
+projector and on a tablet.
+
+Each control drives a *list* of targets, each with its own range, which is the
+whole difference between a remote control and a macro: one knob can open a
+filter from 200 Hz to 8 kHz while it takes a reverb from dry to a third wet and
+pushes a delay's feedback over only the top half of its travel. Binding is by
+**learn**: arm it, move the control you want, and it is bound.
+
+### Web control, for a tablet
+
+Turn the server on in settings and the surface is served to any browser on the
+network - the same layout, the same grid, the same behaviour under a finger. It
+is written against the WebSocket specification directly, over the application's
+own HTTP server, with no framework at either end: one page, no build step, no
+dependency to keep current.
+
+The protocol is deliberately small. The server sends the layout on connection
+and whenever it changes, and a value as it moves; the client sends a value as it
+moves. A value arriving from a tablet is applied with the same call the local
+knob makes and echoed to every *other* client, never back to the one that sent
+it, which would fight its own finger.
+
+### Projects and songs
+
+The library is a directory of small JSON files - one per song, one per project,
+one per tagged asset - rather than a database. A song can be opened in a text
+editor, hand-edited, diffed and put in version control beside the audio it
+describes; a half-written file costs one entry rather than the library; two
+machines merge by copying files. Nothing here is destructive: an entry
+*references* audio by path and never moves, rewrites or owns it.
+
+The **Songs** tab holds what a song is made of - its stems, its tempo, its key,
+its sections, the patch it was built in. The **Projects** tab groups songs into
+a set with a running order that can be reordered in place. A song can belong to
+as many projects as it likes, because membership is recorded on the entry rather
+than by where a file sits.
+
+### File librarian
+
+A folder of ten thousand one-shots is unusable by name. Names are inconsistent,
+often wrong, and say nothing about what a sound is. So the librarian sorts and
+filters by what the analysis found - length, brightness, pitch and confidence,
+peak level, tags - and answers the question that actually comes up: *what else
+in here sounds like this one*.
+
+Analysis is a background scan: duration, peak and RMS, spectral centroid, eight
+band energies, an envelope, and a pitch by normalised autocorrelation with an
+octave correction and a physical sanity check, so a swept kick reports no pitch
+rather than a confident wrong one. Each file gets a 3D spectral view - log-spaced
+frequency rows over time, spun and tilted with the mouse - because the shape of a
+hit is easier to recognise than its numbers.
+
+Normalise and trim write a *sibling* file with a suffix. Nothing the librarian
+offers can damage the folder it is pointed at.
+
+Rows drag out of the window into any other application: find the sound, drag it
+straight into the DAW.
+
+### Analyse and rebuild
+
+A folder of badly-named files, one screen at a time, into a folder that can be
+worked with. Every file gets a guessed instrument, a proposed name and a tag,
+each shown with the reason it was guessed, and nothing happens until it is
+approved.
+
+That asymmetry is the design. A classifier built on band energies and an
+envelope will be wrong often enough that acting first and asking later would
+mean a folder nobody can trust and no way to tell which parts were the machine's
+fault. Approved files are *copied* to a new folder under their new names; the
+originals stay exactly where they were.
+
+It will also **slice** a loop into the hits it is made of, by spectral flux - the
+rise in energy from one window to the next, which finds a snare landing on a
+still-ringing kick where plain amplitude does not. Each slice is written out as
+its own file and goes through the same analysis and classification as anything
+else, so a sliced loop arrives already tagged.
 
 ### Audio output
 
@@ -206,6 +339,10 @@ samples usually live in, and every mounted drive, with a path field you can
 paste into. Drag a file onto the canvas for a new player, or onto an existing
 one to replace what it is holding. Double-click a patch to open it.
 
+Drag a file *out of the window* and it becomes an ordinary Windows file drag, so
+it can go straight into a DAW, an editor or a folder. A drag that ends inside the
+window is still a drag to the canvas; leaving is what changes what it means.
+
 ---
 
 ## Getting started
@@ -219,7 +356,9 @@ AIFF onto the canvas, or onto an existing player to replace its file.
 | `Space` | play / pause |
 | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` | new / open / save patch |
 | `Ctrl+R` | capture a metasurface snapshot at the cursor |
-| `F1` `F2` `F3` | patch / metasurface / plugins |
+| `Ctrl+,` | settings |
+| `F1` `F2` `F3` `F4` | patch / control / plugins / stems |
+| `F5` `F6` `F7` | projects / songs / library |
 | `Ctrl+1` `Ctrl+2` `Ctrl+3` | toggle the browser, inspector and timeline |
 | `Delete` | delete the selection |
 | `Ctrl+D` | duplicate |
@@ -235,6 +374,10 @@ AIFF onto the canvas, or onto an existing player to replace its file.
 
 On the metasurface: drag a snapshot to move it, `Alt`-click to recall it exactly,
 right-click to delete it, double-click empty space to capture a new one there.
+
+On a stem player: right-click an output port to open that stem's rack in the
+inspector. `Shift`-click a tag in the stem browser to edit its name, output and
+colour.
 
 ---
 
@@ -265,7 +408,9 @@ base64. A node type the build does not have degrades to a warning and keeps the
 rest of the patch, rather than losing the lot.
 
 Patches live in `Documents\acomposter\patches`; settings and the plugin scan
-cache in `%APPDATA%\acomposter`.
+cache in `%APPDATA%\acomposter`. The library - songs, projects, tagged assets,
+the tag palette, chain presets and colour presets - lives in
+`Documents\acomposter\library`, one readable file per entry.
 
 ---
 
@@ -294,17 +439,20 @@ It also cross-compiles from Linux with mingw-w64 - see
 
 ```
 src/core/       engine, graph, parameters, transport, JSON, file I/O
-src/dsp/        interpolation, filters, fade laws, meters
+src/dsp/        interpolation, filters, fade laws, meters, FFT
 src/audio/      WAV and AIFF codecs, sample buffers
 src/nodes/      the node library
 src/meta/       metasurface
+src/control/    the played control surface: controls, targets, grid
+src/library/    songs and projects, analysis, classification, slicing, presets
+src/net/        HTTP and WebSocket servers, SHA-1, the control page
 src/patch/      the .acp format
 src/vst2/       clean-room VST2 ABI, in-process host, bridge client, scanner
 src/bridge/     the helper process, built twice
 src/gfx/        D3D11 renderer, draw list, GDI font atlas
 src/ui/         immediate-mode framework, theme, views
-src/platform/   window, WASAPI and ASIO backends, file dialogs
-tests/          470 checks, runnable on the build host
+src/platform/   window, WASAPI and ASIO backends, file dialogs, drag-out
+tests/          831 checks, runnable on the build host
 ```
 
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) goes into how the threading and the
@@ -317,16 +465,27 @@ plugin bridge actually work.
 Version 0.1.3. Everything described above is implemented, and the binaries build
 clean under both MSVC and mingw-w64 with warnings as errors.
 
-The engine, codecs, metasurface, patch format, section launching and colour
-interpolation are covered by 513 checks that run on the build host. The interface, the patcher, the file browser, drag and
-drop, and VST2 scanning and instantiation have been driven end to end against
-the real binary. WASAPI has been exercised on hardware.
+The engine, codecs, metasurface, patch format, section launching, colour
+interpolation, analysis, classification, slicing, the library, the preset stores
+and the WebSocket framing are covered by 831 checks that run on the build host.
+The interface, the patcher, the stem browser, the librarian, the wizard, the
+control surface, the file browser, drag and drop, and VST2 scanning and
+instantiation have been driven end to end against the real binary. WASAPI has
+been exercised on hardware.
 
-**ASIO has not been tested against a real driver.** It is written to the
-specification and its structure layouts are pinned by `static_assert`, but no
-interface has been in front of it. If it misbehaves, the driver name, its
-reported channel count and sample format, and what the status bar says are the
-useful things to report.
+Three things are honestly short of that:
+
+- **ASIO has not been tested against a real driver.** It is written to the
+  specification and its structure layouts are pinned by `static_assert`, but no
+  interface has been in front of it. If it misbehaves, the driver name, its
+  reported channel count and sample format, and what the status bar says are the
+  useful things to report.
+- **Chain presets have only been exercised against empty racks.** The capture,
+  the store, the rebinding and the missing-plugin reporting are all tested; what
+  has not been seen is a real plugin's state coming back out of one.
+- **Web control has been driven from a desktop browser, not from an iPad.** The
+  page, the protocol and the layout are tested; the touch behaviour on the device
+  it was built for has not been.
 
 The strip along the bottom of the patch view (`Ctrl+3`) is reserved for the
 arrangement timeline and currently holds only a live bar ruler. It is laid out

@@ -833,10 +833,17 @@ void Application::handleGlobalShortcuts() {
     if (in.keyPressed(ui::key::Space) && !in.ctrl)
         engine_.transport().togglePlaying();
 
-    if (in.keyPressed(ui::key::F1)) activeView_ = ui::MainView::Patch;
-    if (in.keyPressed(ui::key::F1 + 3)) activeView_ = ui::MainView::Stems;
+    // The four tabs a set is played from lead, in the order they are reached
+    // for; the three library tabs follow. Not tab order: F1 has meant the patch
+    // since before the library tabs existed, and renumbering the keys somebody
+    // has in their fingers to tidy a list is not worth it.
+    if (in.keyPressed(ui::key::F1 + 0)) activeView_ = ui::MainView::Patch;
     if (in.keyPressed(ui::key::F1 + 1)) activeView_ = ui::MainView::Control;
     if (in.keyPressed(ui::key::F1 + 2)) activeView_ = ui::MainView::Plugins;
+    if (in.keyPressed(ui::key::F1 + 3)) activeView_ = ui::MainView::Stems;
+    if (in.keyPressed(ui::key::F1 + 4)) activeView_ = ui::MainView::Projects;
+    if (in.keyPressed(ui::key::F1 + 5)) activeView_ = ui::MainView::Songs;
+    if (in.keyPressed(ui::key::F1 + 6)) activeView_ = ui::MainView::Library;
 
     // Ctrl+comma is the conventional settings shortcut on every platform.
     if (in.ctrl && in.keyPressed(0xBC)) settings_.open();
