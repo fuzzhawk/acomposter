@@ -122,9 +122,9 @@ float PatcherView::nodeWidth(const Node& node) const {
 
     if (node.typeName() == "sample.player" || node.typeName() == "looper") return 230.0f;
     // Wide enough for a row of section buttons and a column of stem strips.
-    if (node.typeName() == "stem.player") return 340.0f;
+    if (node.typeName() == "stem.player") return 460.0f;
     if (node.typeName() == "color") return 260.0f;
-    if (node.typeName() == "build") return 220.0f;
+    if (node.typeName() == "build") return 250.0f;
     if (node.typeName().rfind("mixer.", 0) == 0) {
         const auto* mixer = static_cast<const MixerNode*>(&node);
         return clampValue(46.0f * static_cast<float>(mixer->channelCount()) + 20.0f, 180.0f, 780.0f);
@@ -145,9 +145,9 @@ float PatcherView::nodeHeight(const Node& node) const {
     const std::string& type = node.typeName();
 
     if (type == "sample.player") bodyHeight = 128.0f;
-    else if (type == "stem.player") bodyHeight = 292.0f;
+    else if (type == "stem.player") bodyHeight = 360.0f;
     else if (type == "color") bodyHeight = 132.0f;
-    else if (type == "build") bodyHeight = 116.0f;
+    else if (type == "build") bodyHeight = 208.0f;
     else if (type == "looper") bodyHeight = 116.0f;
     else if (type == "crossfader") bodyHeight = 92.0f;
     else if (type.rfind("mixer.", 0) == 0) bodyHeight = 132.0f;
@@ -480,6 +480,48 @@ bool PatcherView::removeFromChain(NodeId nodeId) {
 
     selection_.erase(std::remove(selection_.begin(), selection_.end(), nodeId), selection_.end());
     return true;
+}
+
+int PatcherView::copyStemChain(NodeId stemPlayer, int fromSlot, int toSlot) {
+    if (!engine_ || fromSlot == toSlot) return 0;
+
+    Graph& graph = engine_->graph();
+    const std::vector<NodeId> source =
+        downstreamChain(graph, stemPlayer, static_cast<PortIndex>(fromSlot));
+
+    int copied = 0;
+    for (NodeId id : source) {
+        auto* plugin = dynamic_cast<vst2::VstNode*>(graph.node(id));
+        if (!plugin) continue;   // only plugins are worth duplicating
+
+        const NodeId added = addToStemChain(stemPlayer, toSlot, plugin->pluginDescription(),
+                                            plugin->bridged());
+        if (added == kInvalidNode) continue;
+
+        // Carry the settings across, not just the plugin. Copying a rack that
+        // arrives at its defaults would mean dialling every one of them in
+        // again, which is most of the work the copy was meant to save.
+        if (auto* clone = dynamic_cast<vst2::VstNode*>(graph.node(added))) {
+            if (plugin->pluginLoaded() && clone->pluginLoaded()) {
+                if (vst2::Vst2Plugin* from = plugin->plugin()) {
+                    if (vst2::Vst2Plugin* to = clone->plugin()) {
+                        const std::vector<std::uint8_t> state = from->saveState();
+                        if (!state.empty()) to->restoreState(state);
+                        else {
+                            for (int p = 0; p < std::min(from->parameterCount(),
+                                                         to->parameterCount()); ++p)
+                                to->setParameterValue(p, from->parameterValue(p));
+                        }
+                        clone->refreshParametersFromPlugin();
+                    }
+                }
+            }
+            clone->setName(plugin->name());
+        }
+        ++copied;
+    }
+
+    return copied;
 }
 
 void PatcherView::tidyStemChains(NodeId stemPlayer) {
@@ -1063,6 +1105,37 @@ void PatcherView::drawCrossfaderBody(Ui& ui, Node& node, const Rect& body) {
 }
 
 
+namespace {
+
+// A stable colour per section. Taken from the section's own hue when it has one
+// so the marker on the spectral strip and the cell on the grid are the same
+// colour, and spread around the wheel by index otherwise.
+gfx::Colour sectionColour(const StemSection& section, int index) {
+    const float hue = section.hue > 0.0f ? section.hue
+                                         : std::fmod(static_cast<float>(index) * 0.137f, 1.0f);
+
+    // Six-segment wheel, kept desaturated enough to read against the dark lab
+    // palette rather than shouting over the spectrum underneath.
+    const float h = hue * 6.0f;
+    const int segment = static_cast<int>(h) % 6;
+    const float f = h - std::floor(h);
+
+    const float high = 0.85f, low = 0.35f;
+    const float rise = low + (high - low) * f;
+    const float fall = high - (high - low) * f;
+
+    switch (segment) {
+        case 0:  return { high, rise, low, 1.0f };
+        case 1:  return { fall, high, low, 1.0f };
+        case 2:  return { low, high, rise, 1.0f };
+        case 3:  return { low, fall, high, 1.0f };
+        case 4:  return { rise, low, high, 1.0f };
+        default: return { high, low, fall, 1.0f };
+    }
+}
+
+} // namespace
+
 void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
     const float s = bodyScale();
     const Theme& t = theme();
@@ -1107,9 +1180,10 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
                 const bool isActive = index == active;
                 const bool isPending = index == pending;
 
+                const Colour marker = sectionColour(section, index);
                 Colour fill = t.widgetBackground;
-                if (isActive) fill = t.accent.withAlpha(0.30f);
-                else if (isPending) fill = t.control.withAlpha(0.28f);
+                if (isActive) fill = marker.withAlpha(0.34f);
+                else if (isPending) fill = marker.withAlpha(0.20f);
 
                 bool hovered = false, held = false;
                 const UiId cellId = ui.idFrom(&node, 400 + index);
@@ -1125,10 +1199,10 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
                 if (isActive) {
                     const float progress = stems.loopProgress();
                     list.addRectFilled(Rect{ cell.left(), cell.bottom() - 3.0f,
-                                             cell.width * progress, 3.0f }, t.accent);
-                    list.addRect(cell, t.accent, 1.0f, t.cornerRadius);
+                                             cell.width * progress, 3.0f }, marker);
+                    list.addRect(cell, marker, 1.0f, t.cornerRadius);
                 } else if (isPending) {
-                    list.addRect(cell, t.control, 1.0f, t.cornerRadius);
+                    list.addRect(cell, marker.withAlpha(0.8f), 1.0f, t.cornerRadius);
                 }
 
                 list.addTextClipped(ui.font(t.fontSmall), cell.deflated(s * 3.0f),
@@ -1142,10 +1216,10 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
 
     // -- launch and divide -------------------------------------------------
     Rect controlRow = area.removeFromTop(s * 18.0f);
-    ui.parameterChoice(controlRow.removeFromLeft(controlRow.width * 0.55f),
-                       node.parameter(node.indexOfParameter("launch")));
+    ui.parameterCycle(controlRow.removeFromLeft(controlRow.width * 0.55f),
+                      node.parameter(node.indexOfParameter("launch")), t.accent);
     controlRow.removeFromLeft(s * 4.0f);
-    ui.parameterChoice(controlRow, node.parameter(node.indexOfParameter("divide")));
+    ui.parameterCycle(controlRow, node.parameter(node.indexOfParameter("divide")), t.control);
 
     area.removeFromTop(s * 3.0f);
 
@@ -1196,9 +1270,24 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
     area.removeFromTop(s * 4.0f);
 
     // -- stem strips -------------------------------------------------------
+    // The bar the whole song spans, so section markers can be laid on the
+    // strips in the same coordinates the playheads move through.
+    const double songSeconds = [&] {
+        double longest = 0.0;
+        for (int i = 0; i < kMaxStems; ++i)
+            if (const auto buffer = stems.stem(i)) longest = std::max(longest, buffer->durationSeconds());
+        return longest;
+    }();
+
+    const double stemBpmForMarkers = stems.stemBpm() > 0.0
+        ? stems.stemBpm()
+        : (engine_ ? engine_->transport().bpm() : 120.0);
+    const double beatsPerBarMarkers = engine_
+        ? static_cast<double>(std::max(1, engine_->transport().snapshot().timeSigNumerator)) : 4.0;
+
     for (int slot = 0; slot < kMaxStems; ++slot) {
-        if (area.height < s * 18.0f) break;
-        Rect row = area.removeFromTop(s * 17.0f);
+        if (area.height < s * 24.0f) break;
+        Rect row = area.removeFromTop(s * 23.0f);
 
         const bool loaded = stems.stemLoaded(slot);
 
@@ -1260,6 +1349,53 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
                                      strip.width * clampValue(level, 0.0f, 1.0f), s * 2.0f },
                                level > 0.95f ? t.danger : t.accent);
         }
+        // -- section markers -----------------------------------------------
+        // The same colour the section grid uses, so a glance says where in the
+        // song each section sits and how long it is. Drawn over the spectrum
+        // rather than beside it: the point is the relationship between the two.
+        if (songSeconds > 0.0 && loaded) {
+            for (int i = 0; i < stems.sectionCount(); ++i) {
+                const StemSection& section = stems.sections()[static_cast<std::size_t>(i)];
+
+                const double startSeconds = static_cast<double>(section.startBar)
+                                          * beatsPerBarMarkers * 60.0 / stemBpmForMarkers;
+                const double lengthSeconds = static_cast<double>(std::max(1, section.lengthBars))
+                                           * beatsPerBarMarkers * 60.0 / stemBpmForMarkers;
+                if (startSeconds >= songSeconds) continue;
+
+                const float x0 = strip.left()
+                    + strip.width * static_cast<float>(startSeconds / songSeconds);
+                const float x1 = strip.left()
+                    + strip.width * static_cast<float>(std::min(1.0, (startSeconds + lengthSeconds) / songSeconds));
+
+                const Colour marker = sectionColour(section, i);
+                const bool isActive = i == active;
+
+                // A tick at the boundary, and a thin band along the top edge
+                // showing the extent - enough to read, little enough to leave
+                // the spectrum visible underneath.
+                list.addRectFilled(Rect{ x0, strip.top(), std::max(1.0f, x1 - x0), s * 2.5f },
+                                   marker.withAlpha(isActive ? 0.95f : 0.45f));
+                list.addRectFilled(Rect{ x0, strip.top(), 1.0f, strip.height },
+                                   marker.withAlpha(isActive ? 0.8f : 0.35f));
+            }
+        }
+
+        // -- playhead --------------------------------------------------------
+        // One per stem, because a stem the build node is chopping is
+        // deliberately not where the others are. Seeing them separate is how
+        // you know the chop is on and which stems it caught.
+        if (loaded) {
+            const float head = stems.stemPlayhead(slot);
+            if (head > 0.0f) {
+                const float x = strip.left() + strip.width * clampValue(head, 0.0f, 1.0f);
+                const bool chopped = (stems.chopMask() & (1u << slot)) != 0
+                                  && stems.parameter(node.indexOfParameter("repeat")).boolValue();
+                list.addRectFilled(Rect{ x - 1.0f, strip.top(), 2.0f, strip.height },
+                                   chopped ? t.danger : t.text);
+            }
+        }
+
         list.addRect(strip, t.border.withAlpha(0.5f), 1.0f, 2.0f);
     }
 }
@@ -1374,7 +1510,7 @@ void PatcherView::drawBuildBody(Ui& ui, Node& node, const Rect& body) {
     // Momentary, deliberately: it engages on press and releases on release,
     // rather than toggling. A build you have to remember to turn off is a build
     // that gets left on.
-    Rect switchArea = area.removeFromTop(s * 52.0f).deflated(s * 2.0f);
+    Rect switchArea = area.removeFromTop(s * 56.0f).deflated(s * 2.0f);
 
     Parameter& engage = node.parameter(node.indexOfParameter(BuildNode::kEngageParam));
 
@@ -1393,8 +1529,8 @@ void PatcherView::drawBuildBody(Ui& ui, Node& node, const Rect& body) {
     list.addRectFilled(switchArea, fill, t.cornerRadius);
 
     if (running) {
-        list.addRectFilled(Rect{ switchArea.left(), switchArea.bottom() - 4.0f,
-                                 switchArea.width * progress, 4.0f }, t.danger);
+        list.addRectFilled(Rect{ switchArea.left(), switchArea.bottom() - s * 4.0f,
+                                 switchArea.width * progress, s * 4.0f }, t.danger);
         list.addGlow(switchArea, t.danger.withAlpha(0.30f), 8.0f, t.cornerRadius, 4);
     }
     list.addRect(switchArea, running ? t.danger : t.border, 1.0f, t.cornerRadius);
@@ -1405,19 +1541,80 @@ void PatcherView::drawBuildBody(Ui& ui, Node& node, const Rect& body) {
 
     if (hovered) ui.setTooltip("Hold. Releases on the next bar so the drop lands in time.");
 
+    area.removeFromTop(s * 5.0f);
+
+    // -- the stutter, from and to ------------------------------------------
+    // Laid out as the sentence it is: chop from a quarter to a sixteenth, over
+    // eight bars, on this curve. Cycling controls rather than dropdowns - the
+    // menu a combo opens falls outside the node and has to be aimed at while
+    // the set is running, which is the wrong ask of a performance control.
+    Rect chopRow = area.removeFromTop(s * 19.0f);
+    list.addTextClipped(ui.font(t.fontSmall), chopRow.removeFromLeft(s * 34.0f),
+                        t.textFaint, "chop");
+    ui.parameterCycle(chopRow.removeFromLeft(chopRow.width * 0.44f),
+                      node.parameter(node.indexOfParameter("startDivide")), t.control);
+    list.addTextClipped(ui.font(t.fontSmall), chopRow.removeFromLeft(s * 20.0f),
+                        t.textFaint, "to", DrawList::Align::Centre);
+    ui.parameterCycle(chopRow, node.parameter(node.indexOfParameter("endDivide")), t.danger);
+
     area.removeFromTop(s * 4.0f);
 
-    // -- shape -------------------------------------------------------------
-    Rect row = area.removeFromTop(s * 17.0f);
-    ui.parameterSlider(row, node.parameter(node.indexOfParameter("bars")), t.control);
+    Rect shapeRow = area.removeFromTop(s * 19.0f);
+    list.addTextClipped(ui.font(t.fontSmall), shapeRow.removeFromLeft(s * 34.0f),
+                        t.textFaint, "over");
+    ui.parameterSlider(shapeRow.removeFromLeft(shapeRow.width * 0.44f),
+                       node.parameter(node.indexOfParameter("bars")), t.control);
+    shapeRow.removeFromLeft(s * 6.0f);
+    ui.parameterCycle(shapeRow, node.parameter(node.indexOfParameter("curve")), t.accent);
 
-    area.removeFromTop(s * 3.0f);
-    if (area.height >= s * 17.0f) {
-        Rect curveRow = area.removeFromTop(s * 17.0f);
-        ui.parameterChoice(curveRow.removeFromLeft(curveRow.width * 0.5f - 2.0f),
-                           node.parameter(node.indexOfParameter("curve")));
-        curveRow.removeFromLeft(s * 4.0f);
-        ui.parameterChoice(curveRow, node.parameter(node.indexOfParameter("release")));
+    area.removeFromTop(s * 4.0f);
+
+    Rect releaseRow = area.removeFromTop(s * 19.0f);
+    list.addTextClipped(ui.font(t.fontSmall), releaseRow.removeFromLeft(s * 34.0f),
+                        t.textFaint, "drop");
+    ui.parameterCycle(releaseRow.removeFromLeft(releaseRow.width * 0.44f),
+                      node.parameter(node.indexOfParameter("release")), t.accent);
+    releaseRow.removeFromLeft(s * 6.0f);
+    ui.parameterSlider(releaseRow, node.parameter(node.indexOfParameter("colorPush")), t.accentDim);
+
+    area.removeFromTop(s * 5.0f);
+
+    // -- which stems get chopped -------------------------------------------
+    // Eight little pads named after the stem slots. Chopping everything is a
+    // fault rather than an effect, so which stems the stutter catches has to be
+    // one press away, not buried in the inspector.
+    if (area.height >= s * 22.0f) {
+        Rect stemRow = area.removeFromTop(s * 20.0f);
+
+        const StemPlayerNode* stems = engine_
+            ? dynamic_cast<const StemPlayerNode*>(engine_->graph().node(build.stemPlayer()))
+            : nullptr;
+
+        const float padWidth = stemRow.width / static_cast<float>(kMaxStems);
+        for (int slot = 0; slot < kMaxStems; ++slot) {
+            Rect pad = stemRow.removeFromLeft(padWidth).deflated(s * 1.0f);
+
+            const bool on = build.chopsStem(slot);
+            bool padHovered = false, padHeld = false;
+            if (ui.buttonBehaviour(ui.idFrom(&node, 640 + slot), pad, padHovered, padHeld))
+                build.toggleStem(slot);
+
+            Colour padFill = on ? t.danger.withAlpha(0.42f) : t.widgetBackground;
+            if (padHovered) padFill = padFill.brightened(1.4f);
+            list.addRectFilled(pad, padFill, 2.0f);
+            list.addRect(pad, on ? t.danger : t.border, 1.0f, 2.0f);
+
+            // The stem's own initial when a player is wired, so the pads mean
+            // something specific rather than being eight numbered boxes.
+            const std::string name = stems ? stems->stemName(slot) : std::string();
+            const std::string label = name.empty() ? std::to_string(slot + 1)
+                                                   : name.substr(0, 2);
+            list.addTextClipped(ui.font(t.fontSmall), pad, on ? t.text : t.textFaint,
+                                label, DrawList::Align::Centre);
+
+            if (padHovered && !name.empty())
+                ui.setTooltip(name + (on ? " - chopped by the build" : " - plays straight through"));
+        }
     }
 
     // A build with nothing wired to it is silent and confusing, so say so.

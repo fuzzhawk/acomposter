@@ -44,6 +44,9 @@ public:
 
     // Rebuilds the bridge after a crash, restoring state where possible.
     bool reloadPlugin();
+    // Re-reads every parameter out of the plugin. Needed after restoring state
+    // behind the node's back, as copying a rack does.
+    void refreshParametersFromPlugin() { pullParametersFromPlugin(); }
 
     // -- programs ----------------------------------------------------------
     int programCount() const;

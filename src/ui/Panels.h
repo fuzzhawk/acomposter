@@ -75,6 +75,8 @@ public:
     std::function<void(NodeId stemPlayer, int slot)> onAddStemEffect;
     std::function<void(NodeId)> onRemoveFromChain;
     std::function<void(NodeId stemPlayer)> onTidyChains;
+    // Copies one stem's rack onto another, plugin state included.
+    std::function<void(NodeId stemPlayer, int fromSlot, int toSlot)> onCopyChain;
 
 private:
     void drawParameterList(Ui& ui, Rect area, Node& node);
@@ -98,6 +100,8 @@ private:
     // Which section row is open for editing, and its edit buffer.
     int editingSection_ = -1;
     int expandedStem_ = -1;
+    // Source slot armed by 'copy', waiting for a destination.
+    int copySourceStem_ = -1;
     std::string sectionNameBuffer_;
 };
 

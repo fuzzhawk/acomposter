@@ -101,6 +101,16 @@ bool Application::initialise() {
     inspector_.onRemoveFromChain = [this](NodeId node) {
         if (patcher_.removeFromChain(node)) markModified();
     };
+    inspector_.onCopyChain = [this](NodeId player, int from, int to) {
+        const int copied = patcher_.copyStemChain(player, from, to);
+        if (copied > 0) {
+            markModified();
+            ui_.notify("copied " + std::to_string(copied) + " effect"
+                           + (copied == 1 ? "" : "s"), ui::theme().accent, 2.5f);
+        } else {
+            ui_.notify("nothing to copy from that stem", ui::theme().danger, 3.0f);
+        }
+    };
     inspector_.onTidyChains = [this](NodeId player) {
         patcher_.tidyStemChains(player);
         markModified();

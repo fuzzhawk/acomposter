@@ -76,6 +76,11 @@ public:
                           const vst2::PluginDescription& description, bool forceBridge);
     // Removes a node from a chain and closes the gap so the audio still flows.
     bool removeFromChain(NodeId node);
+    // Duplicates one stem's rack onto another, plugin state and all. Anything
+    // already on the destination is left in place and the copy is appended, so
+    // this adds rather than silently replaces. Returns how many were copied.
+    int copyStemChain(NodeId stemPlayer, int fromSlot, int toSlot);
+
     // Lays a stem player's racks out in tidy rows to the right of it.
     void tidyStemChains(NodeId stemPlayer);
 

@@ -110,6 +110,21 @@ public:
 
     // Position through the current loop, 0..1, for the progress ring.
     float loopProgress() const noexcept { return loopProgress_.load(std::memory_order_relaxed); }
+
+    // Where each stem is reading, as a fraction of its own file. Per stem
+    // rather than one shared value, because a chopped stem is deliberately not
+    // where the others are - that difference is the effect, and seeing it is
+    // how you know the chop is on.
+    float stemPlayhead(int slot) const noexcept;
+
+    // Which stems the build node's beat repeat applies to, one bit per slot.
+    // Everything not in the mask keeps playing straight through, which is what
+    // makes a chop musical: stuttering the drums over a held pad is an effect,
+    // stuttering everything is a fault.
+    void setChopMask(std::uint32_t mask) noexcept {
+        chopMask_.store(mask, std::memory_order_relaxed);
+    }
+    std::uint32_t chopMask() const noexcept { return chopMask_.load(std::memory_order_relaxed); }
     float meterLevel(int slot, int channel) const noexcept;
 
     // -- Node --------------------------------------------------------------
@@ -177,6 +192,8 @@ private:
     std::atomic<int> activeSection_{ 0 };
     std::atomic<int> pendingSection_{ -1 };
     std::atomic<float> loopProgress_{ 0.0f };
+    std::atomic<std::uint32_t> chopMask_{ 0xFFFFFFFFu };
+    std::array<std::atomic<float>, kMaxStems> playhead_{};
 
     // Audio-thread only.
     double lastLocalBeats_ = 0.0;

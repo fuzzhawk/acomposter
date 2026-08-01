@@ -76,6 +76,19 @@ public:
 
     static constexpr const char* kEngageParam = "engage";
 
+    // -- which stems get chopped -------------------------------------------
+    // One bit per stem slot. Stuttering the drums under a held pad is an
+    // effect; stuttering everything at once is a fault, so this defaults to the
+    // rhythm slots rather than to all of them.
+    std::uint32_t chopMask() const noexcept { return chopMask_; }
+    void setChopMask(std::uint32_t mask) noexcept { chopMask_ = mask; }
+    bool chopsStem(int slot) const noexcept {
+        return slot >= 0 && slot < 32 && (chopMask_ & (1u << slot)) != 0;
+    }
+    void toggleStem(int slot) noexcept {
+        if (slot >= 0 && slot < 32) chopMask_ ^= (1u << slot);
+    }
+
 private:
     // Writes the driven parameters for the current build position. Message
     // thread, for the same reason the colour node applies there.
@@ -114,6 +127,10 @@ private:
     // exactly once rather than being held down every frame.
     bool drivingTargets_ = false;
     float restoreColor_ = 0.0f;
+    // Drums and bass by default: the two that a stutter reads on.
+    std::uint32_t chopMask_ = 0x3u;
+    // What the stem player's mask was before the build took it over.
+    std::uint32_t restoreChopMask_ = 0xFFFFFFFFu;
 };
 
 } // namespace acm

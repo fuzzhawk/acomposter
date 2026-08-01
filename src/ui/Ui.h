@@ -206,6 +206,15 @@ public:
     bool parameterToggle(const Rect& rect, Parameter& parameter, const Colour& fill);
     bool parameterChoice(const Rect& rect, Parameter& parameter);
 
+    // A choice that advances on click rather than opening a menu. Right-click
+    // or shift-click steps back.
+    //
+    // Inside a node body this is the better control by some distance: the menu
+    // a combo opens falls outside the node, over the canvas, and has to be
+    // aimed at while the set is running. One click on a control that is already
+    // under the finger beats hitting a three-pixel row on a touchscreen.
+    bool parameterCycle(const Rect& rect, Parameter& parameter, const Colour& accent);
+
     // A bare integer field, dragged horizontally or typed into. Used for things
     // that are not node parameters - bar numbers, counts - and so cannot go
     // through the parameter widgets.

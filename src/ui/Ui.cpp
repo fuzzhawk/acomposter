@@ -778,6 +778,62 @@ bool Ui::parameterChoice(const Rect& rect, Parameter& parameter) {
     return false;
 }
 
+bool Ui::parameterCycle(const Rect& rect, Parameter& parameter, const Colour& accent) {
+    const Theme& t = theme();
+    DrawList& list = insidePopup_ ? overlayList_ : drawList_;
+
+    const UiId control = idFrom(&parameter, 0x0C4C1E);
+    bool hovered = false, held = false;
+    const bool clicked = buttonBehaviour(control, rect, hovered, held);
+
+    const int count = static_cast<int>(parameter.choices().size());
+    bool changed = false;
+
+    if (clicked && count > 0) {
+        const int step = input_.shift ? -1 : 1;
+        const int next = ((parameter.intValue() + step) % count + count) % count;
+        parameter.setValue(static_cast<float>(next));
+        changed = true;
+    }
+
+    // Right-click steps back too, for the same reason a jog wheel turns both
+    // ways: overshooting a four-item list should not mean going round again.
+    if (hovered && count > 0 && input_.mousePressed[static_cast<int>(MouseButton::Right)]) {
+        const int next = ((parameter.intValue() - 1) % count + count) % count;
+        parameter.setValue(static_cast<float>(next));
+        input_.mousePressed[static_cast<int>(MouseButton::Right)] = false;
+        changed = true;
+    }
+
+    list.addRectFilled(rect, hovered ? t.widgetHover : t.widgetBackground, t.cornerRadius);
+    if (held) list.addRectFilled(rect, accent.withAlpha(0.22f), t.cornerRadius);
+    list.addRect(rect, hovered ? accent.withAlpha(0.7f) : t.border, t.borderWidth, t.cornerRadius);
+
+    const int index = parameter.intValue();
+    const std::string_view text =
+        (index >= 0 && index < count) ? std::string_view(parameter.choices()[static_cast<std::size_t>(index)])
+                                      : std::string_view("-");
+    list.addTextClipped(font(t.fontSmall), rect.deflated(t.smallPadding),
+                        hovered ? t.text : t.textDim, text, DrawList::Align::Centre);
+
+    // Position dots along the bottom edge, so how many choices there are and
+    // where you are in them is readable without clicking through.
+    if (count > 1 && count <= 8 && rect.width > 30.0f) {
+        const float dotWidth = rect.width / static_cast<float>(count);
+        for (int i = 0; i < count; ++i) {
+            list.addRectFilled(Rect{ rect.left() + dotWidth * static_cast<float>(i) + 2.0f,
+                                     rect.bottom() - 2.5f, dotWidth - 4.0f, 1.5f },
+                               i == index ? accent : t.border);
+        }
+    }
+
+    if (hovered) {
+        setCursor(Cursor::Hand);
+        setTooltip(parameter.name() + " - click to advance, shift or right-click to go back");
+    }
+    return changed;
+}
+
 bool Ui::parameterRow(const Rect& rect, Parameter& parameter, const Colour& fill) {
     const Theme& t = theme();
 

@@ -398,6 +398,33 @@ void InspectorView::drawStemChains(Ui& ui, Rect& area, Node& node) {
         if (ui.isHot(ui.idFrom(&node, 1000 + slot)))
             ui.setTooltip("Add an effect to the end of this stem's rack");
 
+        // Copy is a two-step: arm a source, then pick a destination. A single
+        // button cannot express "from here to there", and a dropdown of the
+        // other seven stems is more clicks than arming one and hitting another.
+        const Rect copyArea = row.removeFromRight(22.0f);
+        const bool armed = copySourceStem_ == slot;
+        const bool arming = copySourceStem_ >= 0 && !armed;
+
+        if (ui.button(ui.idFrom(&node, 1160 + slot), copyArea,
+                      armed ? "*" : (arming ? ">" : "c"),
+                      armed ? Ui::ButtonStyle::Primary : Ui::ButtonStyle::Ghost,
+                      false, armed || arming || !chain.empty())) {
+            if (armed) {
+                copySourceStem_ = -1;
+            } else if (arming) {
+                if (onCopyChain) onCopyChain(node.id(), copySourceStem_, slot);
+                copySourceStem_ = -1;
+            } else {
+                copySourceStem_ = slot;
+            }
+        }
+        if (ui.isHot(ui.idFrom(&node, 1160 + slot))) {
+            ui.setTooltip(armed ? "Copying from here - now pick a destination"
+                        : arming ? "Paste the armed rack onto this stem"
+                        : chain.empty() ? "Nothing to copy from this stem"
+                                        : "Copy this stem's rack to another");
+        }
+
         const bool expanded = expandedStem_ == slot;
         bool hovered = false, held = false;
         if (ui.buttonBehaviour(ui.idFrom(&node, 1040 + slot), row, hovered, held))

@@ -159,6 +159,11 @@ double StemPlayerNode::songLengthBars(double bpm, int beatsPerBar) const {
     return beats / static_cast<double>(beatsPerBar);
 }
 
+float StemPlayerNode::stemPlayhead(int slot) const noexcept {
+    if (slot < 0 || slot >= kMaxStems) return 0.0f;
+    return playhead_[static_cast<std::size_t>(slot)].load(std::memory_order_relaxed);
+}
+
 float StemPlayerNode::meterLevel(int slot, int channel) const noexcept {
     if (slot < 0 || slot >= kMaxStems) return 0.0f;
     return stems_[static_cast<std::size_t>(slot)].meter[channel & 1]
@@ -506,6 +511,8 @@ void StemPlayerNode::process(ProcessContext& ctx) {
 
     const int mixPort = kMaxStems;   // the summed pair sits after the stems
     float peak[kMaxStems][2] = {};
+    const std::uint32_t mask = chopMask_.load(std::memory_order_relaxed);
+    double lastPosition[kMaxStems] = {};
 
     const double beatsPerFrame = bpm / (60.0 * transport.sampleRate);
 
@@ -568,7 +575,8 @@ void StemPlayerNode::process(ProcessContext& ctx) {
         }
         lastDivide_ = divide;
 
-        const double songBeats = startBeats + readBeats;
+        const double choppedBeats = startBeats + readBeats;
+        const double straightBeats = startBeats + localBeats;
         const double masterLevel = masterGain_.next();
 
         float mixL = 0.0f, mixR = 0.0f;
@@ -580,8 +588,15 @@ void StemPlayerNode::process(ProcessContext& ctx) {
             const SampleBuffer* buffer = buffers[slot];
             if (buffer == nullptr || buffer->empty()) continue;
 
+            // Only the stems in the chop mask follow the repeat; the rest read
+            // straight through, so a stuttered drum loop can sit under a pad
+            // that is still playing the bar out.
+            const bool chopped = (mask & (1u << slot)) != 0;
+            const double songBeats = chopped ? choppedBeats : straightBeats;
+
             // Each stem is read at its own file rate, so a set exported at
             // 44.1 and a riser at 48 sit together without a resample pass.
+
             const double position = songBeats * 60.0 / bpm * buffer->sampleRate();
 
             const float left = readStem(*buffer, 0, position) * gain;
@@ -590,6 +605,8 @@ void StemPlayerNode::process(ProcessContext& ctx) {
             AudioBus& out = ctx.output(slot);
             if (out.numChannels > 0) out.chan(0)[i] = left;
             if (out.numChannels > 1) out.chan(1)[i] = right;
+
+            lastPosition[slot] = position / static_cast<double>(std::max<std::int64_t>(1, buffer->frames()));
 
             mixL += left;
             mixR += right;
@@ -607,6 +624,12 @@ void StemPlayerNode::process(ProcessContext& ctx) {
         if (i == frames - 1)
             loopProgress_.store(static_cast<float>(localBeats / lengthBeats),
                                 std::memory_order_relaxed);
+    }
+
+    for (int slot = 0; slot < kMaxStems; ++slot) {
+        playhead_[static_cast<std::size_t>(slot)].store(
+            static_cast<float>(clampValue(lastPosition[slot], 0.0, 1.0)),
+            std::memory_order_relaxed);
     }
 
     // Meters fall back at roughly the same rate as the master's, so a stem grid

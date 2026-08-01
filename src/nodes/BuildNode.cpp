@@ -37,7 +37,7 @@ BuildNode::BuildNode() : Node("build", NodeCategory::Effect) {
             .setBlend(ParamBlend::Stepped).id());
 
     pStartDivide_ = indexOfParameter(
-        addChoiceParam("startDivide", "From", { "1", "2", "4", "8", "16", "32" }, 0)
+        addChoiceParam("startDivide", "From", { "1", "2", "4", "8", "16", "32" }, 2)
             .setBlend(ParamBlend::Stepped).id());
     pEndDivide_ = indexOfParameter(
         addChoiceParam("endDivide", "To", { "1", "2", "4", "8", "16", "32" }, 4)
@@ -220,6 +220,7 @@ void BuildNode::driveTargets() {
                     repeat >= 0)
                     stems->parameter(repeat).setValue(0.0f);
             }
+            if (stems) stems->setChopMask(restoreChopMask_);
             if (color) color->setColor(restoreColor_);
         }
         return;
@@ -230,6 +231,7 @@ void BuildNode::driveTargets() {
     if (!drivingTargets_) {
         drivingTargets_ = true;
         restoreColor_ = color ? color->color() : 0.0f;
+        restoreChopMask_ = stems ? stems->chopMask() : 0xFFFFFFFFu;
     }
 
     // -- loop divide -------------------------------------------------------
@@ -266,11 +268,16 @@ void BuildNode::driveTargets() {
             divide >= 0)
             stems->parameter(divide).setValue(std::round(choice));
 
-        // Repeat only once the loop has actually been divided; latching the
-        // whole section is not a stutter, it is just the section.
+        // Repeat is on from the moment the switch goes down, not once the curve
+        // has climbed far enough to divide the loop. A build-up whose chop only
+        // arrives halfway through does not feel like it responded to the press,
+        // and "From" now starts at a quarter so there is something to hear
+        // immediately.
         if (const ParamIndex repeat = stems->indexOfParameter(StemPlayerNode::kRepeatParam);
             repeat >= 0)
-            stems->parameter(repeat).setValue(std::round(choice) > 0.5f ? 1.0f : 0.0f);
+            stems->parameter(repeat).setValue(1.0f);
+
+        stems->setChopMask(chopMask_);
 
         // Dropping the low end is done by muting the stems the performer has
         // named as low - by convention the first two slots, drums and bass.
@@ -300,11 +307,14 @@ void BuildNode::saveExtraState(JsonValue& out) const {
     out.set("riser", riserPath_);
     out.set("stemPlayer", static_cast<int>(stemPlayer_));
     out.set("colorNode", static_cast<int>(colorNode_));
+    out.set("chopMask", static_cast<int>(chopMask_));
 }
 
 void BuildNode::loadExtraState(const JsonValue& in) {
     stemPlayer_ = static_cast<NodeId>(in.getInt("stemPlayer", static_cast<int>(kInvalidNode)));
     colorNode_ = static_cast<NodeId>(in.getInt("colorNode", static_cast<int>(kInvalidNode)));
+
+    chopMask_ = static_cast<std::uint32_t>(in.getInt("chopMask", 0x3));
 
     if (const std::string path = in.getString("riser"); !path.empty())
         loadRiser(path, nullptr);
