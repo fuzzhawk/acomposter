@@ -176,26 +176,36 @@ jobs:
       # was added, was not, and the step spent several commits failing to
       # compile rather than failing a test - which is the least useful way for
       # a test step to be red. Running what was just built cannot go stale.
+      # The full package rather than a stripped one. --no-install-recommends
+      # left a Wine that created a prefix and then could not load a statically
+      # linked executable importing nothing but kernel32, user32, msvcrt and
+      # ole32, which is as close to the minimum as a Windows binary gets.
       - name: Install Wine
-        run: sudo apt-get install -y --no-install-recommends wine64
+        run: sudo apt-get install -y wine64
 
       - name: Run the tests
         env:
           WINEDEBUG: "-all"
+          # A pure 64-bit prefix. Nothing here is 32-bit - the bridge is built
+          # but never run by the tests - and asking for WoW64 on a runner
+          # without it only adds a way to fail.
+          WINEARCH: win64
         run: |
           # wine64 on a 64-bit-only install; plain wine where the two have been
-          # merged. The last fallback is the path the loader lives at when the
+          # merged. The last fallback is where the loader lives when the
           # package ships no wrapper in /usr/bin at all.
           WINE=$(command -v wine64 || command -v wine || echo /usr/lib/wine/wine64)
+          echo "using $WINE"
+          ls -l build/win64/bin
 
           # wineboot is a Windows program, not a shell command, so it goes
           # through the loader like anything else. Running it first creates the
-          # prefix here rather than in the middle of the test output, and its
-          # complaints about a 32-bit prefix it has not been asked for are not
-          # a reason to fail.
+          # prefix here rather than in the middle of the test output, and it
+          # complains about a syswow64 it was not asked for even when the run
+          # that follows is fine - so its exit status is not a verdict.
           "$WINE" wineboot --init || true
 
-          "$WINE" build/win64/bin/acomposter_tests.exe
+          "$WINE" "$PWD/build/win64/bin/acomposter_tests.exe"
 
       - name: Check the cross-built binaries
         run: |
