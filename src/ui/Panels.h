@@ -100,6 +100,10 @@ public:
     // stem's treatment and just as much work to build by hand.
     std::function<void(NodeId colourNode, const std::string& name)> onSaveColour;
     std::function<void(NodeId colourNode, const std::string& name)> onLoadColour;
+    // Raised whenever a colour node's target list changes. The application acts
+    // on it because what has to happen next is a metasurface edit, and a
+    // parameter driven by both is a parameter two things write every block.
+    std::function<void()> onColourTargetsChanged;
 
 private:
     void drawParameterList(Ui& ui, Rect area, Node& node);

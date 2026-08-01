@@ -210,6 +210,11 @@ bool Application::initialise() {
                        + std::to_string(placed) + " plugins)",
                    missing.empty() ? ui::theme().accent : ui::theme().warning, 3.0f);
     };
+    inspector_.onColourTargetsChanged = [this] {
+        reconcileColourExclusions();
+        markModified();
+    };
+
     inspector_.onSaveColour = [this](NodeId nodeId, const std::string& name) {
         auto* colour = dynamic_cast<ColorNode*>(engine_.graph().node(nodeId));
         if (!colour || !library_.colours().isOpen()) return;
@@ -234,6 +239,7 @@ bool Application::initialise() {
 
         std::vector<std::string> unmatched;
         const int bound = colour->loadPreset(preset, engine_.graph(), &unmatched);
+        reconcileColourExclusions();
         markModified();
 
         // A preset binds by parameter name against whatever plugins are
@@ -606,6 +612,37 @@ void Application::serviceBackground() {
     }
 }
 
+void Application::reconcileColourExclusions() {
+    // Every parameter any colour node currently drives, whether or not that
+    // target is enabled - a disabled target is one the performer means to bring
+    // back, and handing it to the surface in the meantime would leave it
+    // somewhere unexpected when they do.
+    std::unordered_set<std::uint64_t> driven;
+    for (const auto& node : engine_.graph().nodes()) {
+        const auto* colour = dynamic_cast<const ColorNode*>(node.get());
+        if (!colour) continue;
+        for (const ColorTarget& target : colour->targets())
+            if (target.address.valid()) driven.insert(target.address.key());
+    }
+
+    // Ours and no longer driven: give it back to the surface.
+    for (auto it = colourExclusions_.begin(); it != colourExclusions_.end();) {
+        if (driven.find(*it) != driven.end()) {
+            ++it;
+            continue;
+        }
+        metasurface_.setExcluded(ParamAddress::fromKey(*it), false);
+        it = colourExclusions_.erase(it);
+    }
+
+    // Driven and not yet ours: take it.
+    for (const std::uint64_t key : driven) {
+        if (colourExclusions_.find(key) != colourExclusions_.end()) continue;
+        metasurface_.setExcluded(ParamAddress::fromKey(key), true);
+        colourExclusions_.insert(key);
+    }
+}
+
 float Application::browserWidthPx() const { return ui::theme().scaled(browserWidth_); }
 float Application::inspectorWidthPx() const { return ui::theme().scaled(inspectorWidth_); }
 float Application::timelineHeightPx() const { return ui::theme().scaled(timelineHeight_); }
@@ -920,6 +957,11 @@ void Application::openPatchFile(const std::string& path) {
     patcher_.clearSelection();
     // Every control shows where its parameter is in the patch just loaded.
     surface_.adoptAllFromGraph(engine_.graph());
+    // The colour targets came back with the patch, so the exclusions they own
+    // have to be re-derived: the file records which parameters are excluded but
+    // not which of them the colour knob claimed.
+    colourExclusions_.clear();
+    reconcileColourExclusions();
 
     patcher_.setPan({ patchView_.canvasX, patchView_.canvasY });
     patcher_.setZoom(patchView_.zoom);

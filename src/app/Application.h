@@ -29,8 +29,10 @@
 #include "../ui/Ui.h"
 #include "../vst2/PluginManager.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_set>
 
 namespace acm::app {
 
@@ -87,6 +89,16 @@ private:
     void beginStemEffectPick(NodeId stemPlayer, int slot);
     void togglePluginEditor(NodeId node);
     void closeAllPluginEditors();
+
+    // -- colour and the metasurface ----------------------------------------
+    // Keeps the two off each other's parameters. A colour target and a
+    // metasurface snapshot both write their parameter every block, so a
+    // parameter driven by both is written twice and whichever ran last wins -
+    // which sounds like the colour knob doing nothing, intermittently, and is
+    // very hard to see. Colour wins, because it is the one the performer is
+    // holding: its targets are excluded from the surface for as long as they are
+    // targets, and released again when they stop being.
+    void reconcileColourExclusions();
 
     std::string error_;
 
@@ -151,6 +163,11 @@ private:
     PatchMetadata patchMetadata_;
     std::string patchPath_;
     bool modified_ = false;
+
+    // The exclusions reconcileColourExclusions made, so it can take back its own
+    // and leave alone the ones the performer set by hand in the metasurface's
+    // own list.
+    std::unordered_set<std::uint64_t> colourExclusions_;
 
     // -- panel sizes -------------------------------------------------------
     // Held in design units and scaled at the point of use, so a layout saved on

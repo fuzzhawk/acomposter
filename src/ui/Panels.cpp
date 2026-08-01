@@ -753,6 +753,7 @@ void InspectorView::drawColorSection(Ui& ui, Rect& area, Node& node) {
                   Ui::ButtonStyle::Primary)) {
         int plugins = 0;
         const int added = color->adoptStemChains(engine_->graph(), &plugins);
+        if (onColourTargetsChanged) onColourTargetsChanged();
         if (plugins == 0) {
             ui.notify("no plugins found on any stem rack", t.danger, 4.0f);
         } else {
@@ -835,6 +836,7 @@ void InspectorView::drawColorSection(Ui& ui, Rect& area, Node& node) {
             && chosen >= 0 && chosen < static_cast<int>(ids.size())) {
             const int added = color->adoptNode(ids[static_cast<std::size_t>(chosen)],
                                                engine_->graph());
+            if (onColourTargetsChanged) onColourTargetsChanged();
             ui.notify(std::to_string(added) + " parameters added", t.accent, 2.0f);
         }
     }
@@ -850,6 +852,7 @@ void InspectorView::drawColorSection(Ui& ui, Rect& area, Node& node) {
         const Rect removeArea = row.removeFromRight(t.scaled(18.0f));
         if (ui.iconButton(ui.idFrom(&node, 900 + i), removeArea, Ui::Icon::Cross, t.textFaint)) {
             color->removeTarget(i);
+            if (onColourTargetsChanged) onColourTargetsChanged();
             break;
         }
 

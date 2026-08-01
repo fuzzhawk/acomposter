@@ -209,6 +209,13 @@ at once. Four ship, one per instrument family. They will bind partially, they
 say exactly which targets they could not find, and the ends are still worth
 re-capturing by ear - which is what the capture buttons are for.
 
+A parameter the colour knob has adopted is **taken out of the metasurface** for
+as long as it is a target, and handed back when it stops being one. Both write
+their parameter every block, so a parameter driven by both is written twice and
+whichever ran last wins - which sounds like the colour knob intermittently doing
+nothing and is very hard to see. Colour wins, because it is the one being held.
+The per-parameter icons in the inspector show which is which.
+
 ### Build and drop
 
 **Build** is a momentary switch that takes a section apart. Held, it shortens the
