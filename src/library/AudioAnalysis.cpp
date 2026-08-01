@@ -97,30 +97,36 @@ void detectPitch(const std::vector<float>& mono, double sampleRate,
         return denominator > 1.0e-12 ? sum / denominator : 0.0;
     };
 
+    // Scores for every lag, computed once. The peak picking below looks at
+    // them twice and recomputing would double the cost of the whole analysis.
+    std::vector<double> scores(maxLag + 1, 0.0);
+    for (std::size_t lag = minLag; lag <= maxLag; ++lag) scores[lag] = scoreAt(lag);
+
     double bestScore = 0.0;
     std::size_t bestLag = 0;
-
     for (std::size_t lag = minLag; lag <= maxLag; ++lag) {
-        const double score = scoreAt(lag);
-        if (score > bestScore) { bestScore = score; bestLag = lag; }
+        if (scores[lag] > bestScore) { bestScore = scores[lag]; bestLag = lag; }
     }
 
     if (bestLag == 0) return;
 
     // Octave correction, and it is not optional. A periodic signal correlates
-    // just as well with itself two, three or four periods along as it does at
-    // one, so the highest score is as likely to be a sub-multiple of the true
-    // pitch as the pitch itself - a 110 Hz tone came out as 55 Hz, an octave
-    // down, every time. Any shorter lag that scores nearly as well is the
-    // better answer, because a real octave-down partial would not.
-    for (int divisor = 8; divisor >= 2; --divisor) {
-        const std::size_t candidate = bestLag / static_cast<std::size_t>(divisor);
-        if (candidate < minLag) continue;
-        if (scoreAt(candidate) > bestScore * 0.85) {
-            bestLag = candidate;
-            bestScore = scoreAt(candidate);
-            break;
-        }
+    // just as well with itself any whole number of periods along as it does at
+    // one, so the highest score is as likely to be a multiple of the true
+    // period as the period itself - a 110 Hz tone came back as 55 Hz and a
+    // 660 Hz tone as 60 Hz, its eleventh sub-multiple.
+    //
+    // So the answer is the *earliest* lag that scores nearly as well as the
+    // best, not the best. Trying divisors of the winning lag was the first
+    // attempt and only works when the multiple that won is small: 11 is not,
+    // and no list of divisors is long enough to be right in general.
+    for (std::size_t lag = minLag + 1; lag + 1 <= maxLag && lag < bestLag; ++lag) {
+        if (scores[lag] < bestScore * 0.85) continue;
+        if (scores[lag] <= scores[lag - 1] || scores[lag] < scores[lag + 1]) continue;
+
+        bestLag = lag;
+        bestScore = scores[lag];
+        break;
     }
 
     const double left = scoreAt(bestLag - 1);

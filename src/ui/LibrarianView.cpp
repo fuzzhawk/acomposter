@@ -43,6 +43,8 @@ const char* kKeyNames[12] = { "A", "A#", "B", "C", "C#", "D",
 void LibrarianView::initialise(Engine* engine, library::Library* library) {
     engine_ = engine;
     library_ = library;
+    wizard_.initialise(engine, library);
+    wizard_.onFolderChanged = [this] { if (!folder_.empty()) openFolder(folder_); };
 }
 
 void LibrarianView::serviceFromMessageThread() {
@@ -121,6 +123,18 @@ void LibrarianView::drawToolbar(Ui& ui, Rect& area) {
     } else if (!folder_.empty()) {
         if (ui.button(ui.id("librarian.rescan"), row.removeFromRight(t.scaled(64.0f)), "rescan"))
             openFolder(folder_);
+        row.removeFromRight(t.scaled(6.0f));
+
+        // The rebuilt folder is a sibling of the source rather than inside it,
+        // so a rebuild cannot end up scanning its own output on the next pass.
+        if (!index_.files().empty()
+            && ui.button(ui.id("librarian.wizard"), row.removeFromRight(t.scaled(70.0f)),
+                         "rebuild", Ui::ButtonStyle::Primary)) {
+            wizard_.begin(&index_, pathJoin(pathParent(folder_),
+                                            pathLeaf(folder_) + " rebuilt"));
+        }
+        if (ui.isHot(ui.id("librarian.wizard")))
+            ui.setTooltip("Work through the folder file by file, into a new one beside it");
 
         char status[64];
         std::snprintf(status, sizeof(status), "%d files",
@@ -658,6 +672,9 @@ void LibrarianView::drawDetail(Ui& ui, const Rect& area) {
 
 void LibrarianView::render(Ui& ui, const Rect& bounds) {
     const Theme& t = theme();
+
+    if (wizard_.active()) { wizard_.render(ui, bounds); return; }
+
     ui.draw().addRectFilled(bounds, t.background);
 
     Rect area = bounds;

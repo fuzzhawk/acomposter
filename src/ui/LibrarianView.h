@@ -16,6 +16,7 @@
 #include "../library/FileIndex.h"
 #include "../library/Library.h"
 #include "Ui.h"
+#include "WizardView.h"
 
 #include <functional>
 #include <memory>
@@ -52,6 +53,11 @@ private:
     Engine* engine_ = nullptr;
     library::Library* library_ = nullptr;
     library::FileIndex index_;
+
+    // The wizard takes over the whole tab while it is running, because working
+    // through four hundred proposals in a side panel is not working through
+    // them.
+    WizardView wizard_;
 
     std::string folder_;
     std::string selected_;

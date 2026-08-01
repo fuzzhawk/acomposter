@@ -23,6 +23,8 @@ set(ACOMPOSTER_CORE_SOURCES
     library/AudioAnalysis.cpp
     library/FileIndex.cpp
     library/ChainPreset.cpp
+    library/Classify.cpp
+    library/Slicer.cpp
     library/Library.cpp
     library/TagPalette.cpp
     nodes/BuildNode.cpp
@@ -110,6 +112,7 @@ set(ACOMPOSTER_APP_SOURCES
     ui/ControlView.cpp
     ui/LibrarianView.cpp
     ui/LibraryView.cpp
+    ui/WizardView.cpp
     ui/MetasurfaceView.cpp
     ui/Panels.cpp
     ui/StemBrowserView.cpp

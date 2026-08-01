@@ -20,6 +20,8 @@
 #include "../src/dsp/Fft.h"
 #include "../src/library/AudioAnalysis.h"
 #include "../src/library/FileIndex.h"
+#include "../src/library/Slicer.h"
+#include "../src/library/Classify.h"
 #include "../src/library/ChainPreset.h"
 #include "../src/library/Library.h"
 #include "../src/nodes/BuildNode.h"
@@ -1662,6 +1664,194 @@ void testFilenameNumbersAndPitchClass() {
     CHECK(!library::sameePitchClass(-9, -8));
 }
 
+// Builds a buffer from a generator, for the classifier and slicer tests.
+std::shared_ptr<SampleBuffer> makeTone(double hz, double seconds, double decay,
+                                       double rate = 48000.0) {
+    const auto frames = static_cast<std::int64_t>(rate * seconds);
+    auto buffer = std::make_shared<SampleBuffer>(1, frames, rate);
+    for (std::int64_t i = 0; i < frames; ++i) {
+        const double t = static_cast<double>(i) / rate;
+        buffer->channelForWrite(0)[i] =
+            static_cast<float>(0.8 * std::sin(2.0 * 3.14159265358979323846 * hz * t)
+                               * std::exp(-decay * t));
+    }
+    buffer->computePeak();
+    return buffer;
+}
+
+std::shared_ptr<SampleBuffer> makeNoise(double seconds, double decay, std::uint32_t seed,
+                                        double rate = 48000.0) {
+    const auto frames = static_cast<std::int64_t>(rate * seconds);
+    auto buffer = std::make_shared<SampleBuffer>(1, frames, rate);
+    dsp::Xorshift random{ seed };
+    for (std::int64_t i = 0; i < frames; ++i) {
+        const double t = static_cast<double>(i) / rate;
+        buffer->channelForWrite(0)[i] =
+            static_cast<float>(0.8 * random.nextFloat() * std::exp(-decay * t));
+    }
+    buffer->computePeak();
+    return buffer;
+}
+
+void testClassifierNamesWhatItHears() {
+    TEST("the classifier separates a kick, a hat and a bass note");
+
+    // A kick: a low sine swept down, decaying fast.
+    auto kick = std::make_shared<SampleBuffer>(1, 16000, 48000.0);
+    for (std::int64_t i = 0; i < 16000; ++i) {
+        const double t = static_cast<double>(i) / 48000.0;
+        const double hz = 60.0 * std::exp(-16.0 * t);
+        kick->channelForWrite(0)[i] =
+            static_cast<float>(0.9 * std::sin(2.0 * 3.14159265358979323846 * hz * t)
+                               * std::exp(-22.0 * t));
+    }
+    kick->computePeak();
+
+    const library::Classification kickGuess = library::classify(
+        library::analyse(*kick, "bd_01.wav"));
+    CHECK(kickGuess.instrument == library::Instrument::Kick);
+    CHECK(kickGuess.confidence > 0.5f);
+    // The reason is part of the output, not decoration: a person approving a
+    // hundred guesses needs to see why each was made.
+    CHECK(!kickGuess.reason.empty());
+
+    const library::Classification hatGuess = library::classify(
+        library::analyse(*makeNoise(0.08, 60.0, 0x51u), "ch.wav"));
+    CHECK(hatGuess.instrument == library::Instrument::HiHat);
+
+    // The same sound three times as long is a snare, not a hat. At the old
+    // 0.4 s cutoff the hat rule caught it before the snare rule ever ran.
+    const library::Classification snareGuess = library::classify(
+        library::analyse(*makeNoise(0.30, 14.0, 0x52u), "sd.wav"));
+    CHECK(snareGuess.instrument != library::Instrument::HiHat);
+
+    // A low sine that rings for a second is a bass note; the same spectrum
+    // over 200 ms is a kick. Duration is the only thing that separates them.
+    const library::Classification bassGuess = library::classify(
+        library::analyse(*makeTone(55.0, 1.2, 2.0), "sub.wav"));
+    CHECK(bassGuess.instrument == library::Instrument::Bass);
+
+    const library::Classification leadGuess = library::classify(
+        library::analyse(*makeTone(660.0, 0.9, 2.0), "stab.wav"));
+    CHECK(leadGuess.instrument == library::Instrument::Lead);
+
+    // Long and unpitched is the bucket of last resort, and says so with a low
+    // confidence rather than by claiming to know.
+    const library::Classification fxGuess = library::classify(
+        library::analyse(*makeNoise(3.0, 0.4, 0x77u), "wash.wav"));
+    CHECK(fxGuess.instrument == library::Instrument::Fx);
+    CHECK(fxGuess.confidence < 0.5f);
+
+    // An empty analysis is Unknown rather than a confident guess about silence.
+    CHECK(library::classify(library::Analysis{}).instrument == library::Instrument::Unknown);
+}
+
+void testInstrumentTagsMatchByName() {
+    TEST("instruments find their tag by name, through renames");
+
+    library::TagPalette palette;
+    palette.loadDefaults();
+
+    const std::string kickTag = library::tagForInstrument(palette, library::Instrument::Kick);
+    CHECK(!kickTag.empty());
+    CHECK(palette.find(kickTag)->name == "kick");
+
+    CHECK(!library::tagForInstrument(palette, library::Instrument::Bass).empty());
+    CHECK(!library::tagForInstrument(palette, library::Instrument::Pad).empty());
+
+    // Renaming a tag keeps its id, and matching by name has to follow the new
+    // name - which is the whole reason it is not matched by id.
+    palette.rename(palette.indexOf(kickTag), "bass drum");
+    const std::string renamed = library::tagForInstrument(palette, library::Instrument::Kick);
+    CHECK(renamed == kickTag);
+
+    // A palette with nothing suitable returns nothing rather than the first tag.
+    library::TagPalette sparse;
+    sparse.add("weird", 0xFF000000u);
+    CHECK(library::tagForInstrument(sparse, library::Instrument::Kick).empty());
+}
+
+void testProposedNamesKeepWhatTheNameKnew() {
+    TEST("a proposed name keeps the number the old one carried");
+
+    library::Analysis analysis;
+    analysis.valid = true;
+    analysis.filenameNumbers = { 7 };
+
+    CHECK(library::proposeName(analysis, library::Instrument::Kick, 99) == "kick-07");
+
+    // The last number, not the first: "sub_a2_05" has a digit in its note name
+    // and the take number is the one at the end.
+    analysis.filenameNumbers = { 2, 5 };
+    CHECK(library::proposeName(analysis, library::Instrument::Kick, 99) == "kick-05");
+    analysis.filenameNumbers = { 7 };
+
+    // A pitched sound is named by its note, because anything that has to sit in
+    // a key is easier to find that way than by a number.
+    analysis.noteName = "C2";
+    CHECK(library::proposeName(analysis, library::Instrument::Bass, 99) == "bass-c2-07");
+
+    // Nothing in the old name means the index it was handed.
+    analysis.filenameNumbers.clear();
+    CHECK(library::proposeName(analysis, library::Instrument::Bass, 3) == "bass-c2-03");
+}
+
+void testSlicerFindsHits() {
+    TEST("the slicer cuts a loop where the hits are");
+
+    constexpr double kRate = 48000.0;
+    constexpr double kSpacing = 0.5;
+    constexpr int kHits = 6;
+
+    auto loop = std::make_shared<SampleBuffer>(1, static_cast<std::int64_t>(kRate * 3.0), kRate);
+    dsp::Xorshift random{ 0x99u };
+
+    // Six noise bursts, half a second apart. Each decays into the next, which
+    // is the case plain amplitude detection gets wrong.
+    for (int hit = 0; hit < kHits; ++hit) {
+        const auto start = static_cast<std::int64_t>(kRate * kSpacing * hit);
+        for (std::int64_t i = 0; i < static_cast<std::int64_t>(kRate * 0.4); ++i) {
+            if (start + i >= loop->frames()) break;
+            const double t = static_cast<double>(i) / kRate;
+            loop->channelForWrite(0)[start + i] +=
+                static_cast<float>(0.7 * random.nextFloat() * std::exp(-9.0 * t));
+        }
+    }
+    loop->computePeak();
+
+    const std::vector<std::int64_t> points = library::findSlicePoints(*loop);
+
+    // Six hits, and no more than a couple of extras from the decay tails.
+    CHECK(points.size() >= 6);
+    CHECK(points.size() <= 8);
+
+    // Each expected hit has a slice point near it. "Near" is a hop of the
+    // analysis window, which is what the resolution actually is.
+    for (int hit = 0; hit < kHits; ++hit) {
+        const auto expected = static_cast<std::int64_t>(kRate * kSpacing * hit);
+        bool found = false;
+        for (const std::int64_t point : points)
+            if (std::llabs(point - expected) < static_cast<std::int64_t>(kRate * 0.03))
+                found = true;
+        CHECK(found);
+    }
+
+    // The head of the file is always a slice: dropping it would silently lose
+    // one hit from every loop.
+    CHECK(points.front() < static_cast<std::int64_t>(kRate * 0.02));
+
+    // Extracting one gives a buffer of the right length, faded at both ends so
+    // a cut mid-cycle does not click.
+    auto slice = library::extractSlice(*loop, points[1], points[2]);
+    CHECK(slice != nullptr);
+    CHECK(slice->frames() == points[2] - points[1]);
+    CHECK(std::fabs(slice->channel(0)[0]) < 1e-6f);
+
+    // Silence produces nothing to cut rather than a slice per window.
+    auto quiet = std::make_shared<SampleBuffer>(1, static_cast<std::int64_t>(kRate), kRate);
+    CHECK(library::findSlicePoints(*quiet).size() <= 1);
+}
+
 void testFileIndexCacheAndQuery() {
     TEST("the index caches its analysis and answers questions about it");
 
@@ -2371,6 +2561,10 @@ int main() {
     testNoteNaming();
     testAnalysisSeparatesSounds();
     testFilenameNumbersAndPitchClass();
+    testClassifierNamesWhatItHears();
+    testInstrumentTagsMatchByName();
+    testProposedNamesKeepWhatTheNameKnew();
+    testSlicerFindsHits();
     testFileIndexCacheAndQuery();
     testProjectRunningOrder();
     testChainPresetRoundTrip();
