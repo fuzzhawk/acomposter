@@ -18,6 +18,7 @@ set(ACOMPOSTER_CORE_SOURCES
     audio/AudioFile.cpp
     audio/SampleBuffer.cpp
 
+    library/ChainPreset.cpp
     library/Library.cpp
     library/TagPalette.cpp
     nodes/BuildNode.cpp

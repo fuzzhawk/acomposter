@@ -28,6 +28,11 @@ struct Tag {
     // which is the honest default: a tag is a description first and a routing
     // decision second.
     int outputSlot = -1;
+
+    // The chain preset this category is treated with. Tagging a stem offers to
+    // build it, which is the whole point of standardising the vocabulary: the
+    // tag is not just a label, it is a decision about how the stem is handled.
+    std::string defaultChain;
 };
 
 class TagPalette {

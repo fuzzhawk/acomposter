@@ -5,6 +5,7 @@
 #include "../core/Json.h"
 #include "../nodes/NodeFactory.h"
 #include "../nodes/SamplePlayerNode.h"
+#include "../nodes/StemPlayerNode.h"
 #include "../platform/FileDialog.h"
 #include "../vst2/BridgedVst2Plugin.h"
 #include "../vst2/NativeVst2Plugin.h"
@@ -97,7 +98,7 @@ bool Application::initialise() {
         activeView_ = ui::MainView::Patch;
         markModified();
     };
-    inspector_.initialise(&engine_, &metasurface_);
+    inspector_.initialise(&engine_, &metasurface_, &library_);
     pluginView_.initialise(&plugins_);
     settings_.initialise(&engine_, &deviceSettings_);
     settings_.onApplyAudioSettings = [this] { restartAudioDevice(); };
@@ -330,6 +331,20 @@ void Application::serviceBackground() {
         for (const std::string& file : input_.droppedFiles) {
             if (patcher_.handleFileDrop(file, input_.dropPosition, canvas))
                 markModified();
+        }
+    }
+
+    // The palette's tag-to-output map, pushed into every stem player. The node
+    // resolves tags to buses itself and never learns what a library is; this is
+    // the only place the two meet.
+    {
+        std::vector<std::pair<std::string, int>> routing;
+        for (const library::Tag& tag : library_.palette().tags())
+            routing.emplace_back(tag.id, tag.outputSlot);
+
+        for (const auto& node : engine_.graph().nodes()) {
+            if (auto* stems = dynamic_cast<StemPlayerNode*>(node.get()))
+                stems->setTagRouting(routing);
         }
     }
 

@@ -17,6 +17,7 @@
 #include "../src/core/Transport.h"
 #include "../src/dsp/Dsp.h"
 #include "../src/meta/Metasurface.h"
+#include "../src/library/ChainPreset.h"
 #include "../src/library/Library.h"
 #include "../src/nodes/BuildNode.h"
 #include "../src/nodes/ColorNode.h"
@@ -25,6 +26,7 @@
 #include "../src/patch/Patch.h"
 #include "../src/vst2/PeArchitecture.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -899,10 +901,21 @@ double renderBeats(Graph& graph, TransportState& transport, double beats, int bl
 // Library
 // ---------------------------------------------------------------------------
 
+
+// The library tests write real files, so each one starts by clearing its own
+// directory. Without this they pass once and then fail on every later run,
+// which is a worse failure mode than not testing at all.
+void clearTestLibrary(const std::string& root) {
+    for (const DirectoryEntry& file : listDirectory(pathJoin(root, "entries"), { ".json" }))
+        deleteFile(file.fullPath);
+    deleteFile(pathJoin(root, "tags.json"));
+}
+
 void testLibraryRoundTrip() {
     TEST("library entries survive being written and re-read");
 
     const std::string root = "acomposter-test-library";
+    clearTestLibrary(root);
 
     {
         library::Library lib;
@@ -953,6 +966,7 @@ void testLibraryMultipleMembership() {
     TEST("a file can belong to several songs at once");
 
     const std::string root = "acomposter-test-library-2";
+    clearTestLibrary(root);
 
     library::Library lib;
     CHECK(lib.open(root));
@@ -977,6 +991,7 @@ void testLibraryTagging() {
     TEST("tagging a file makes an asset entry and survives a rename");
 
     const std::string root = "acomposter-test-library-3";
+    clearTestLibrary(root);
 
     library::Library lib;
     CHECK(lib.open(root));
@@ -1004,6 +1019,7 @@ void testLibrarySurvivesBadEntry() {
     TEST("one unreadable entry costs one entry, not the library");
 
     const std::string root = "acomposter-test-library-4";
+    clearTestLibrary(root);
 
     {
         library::Library lib;
@@ -1019,6 +1035,105 @@ void testLibrarySurvivesBadEntry() {
     CHECK(lib.open(root, &skipped));
     CHECK(skipped == 1);
     CHECK(lib.entriesOfKind(library::EntryKind::Song).size() == 1);
+}
+
+
+void testStemTagRouting() {
+    TEST("a stem's tag decides its output until it is pinned");
+
+    StemPlayerNode stems;
+
+    // The palette's map, as the application publishes it each frame.
+    stems.setTagRouting({ { "bass", 1 }, { "pads", 3 } });
+
+    // Untagged stems stay on their own output rather than collapsing onto one.
+    CHECK(stems.resolvedRoute(0) == 0);
+    CHECK(stems.resolvedRoute(4) == 4);
+
+    stems.setStemTag(0, "bass");
+    CHECK(stems.resolvedRoute(0) == 1);
+
+    stems.setStemTag(2, "pads");
+    stems.setStemTag(3, "pads");
+    // Two stems on one bus is the normal case, not a clash.
+    CHECK(stems.resolvedRoute(2) == 3);
+    CHECK(stems.resolvedRoute(3) == 3);
+
+    // Pinning one of them breaks the link without retagging it.
+    stems.setStemRoute(3, 6);
+    CHECK(stems.resolvedRoute(3) == 6);
+    CHECK(stems.resolvedRoute(2) == 3);
+
+    // Handing it back returns it to the tag.
+    stems.setStemRoute(3, -1);
+    CHECK(stems.resolvedRoute(3) == 3);
+
+    // A tag with no output assigned leaves the stem where it was.
+    stems.setStemTag(5, "nothing-mapped-here");
+    CHECK(stems.resolvedRoute(5) == 5);
+}
+
+void testStemRoutingPersists() {
+    TEST("tags and pins survive a save and load");
+
+    StemPlayerNode source;
+    source.setTagRouting({ { "bass", 1 } });
+    source.setStemTag(0, "bass");
+    source.setStemRoute(2, 7);
+
+    JsonValue state = JsonValue::object();
+    source.saveExtraState(state);
+
+    StemPlayerNode loaded;
+    loaded.loadExtraState(state);
+    loaded.setTagRouting({ { "bass", 1 } });
+
+    CHECK(loaded.stemTag(0) == "bass");
+    CHECK(loaded.resolvedRoute(0) == 1);
+    CHECK(loaded.stemRoute(2) == 7);
+    CHECK(loaded.resolvedRoute(2) == 7);
+}
+
+void testChainPresetRoundTrip() {
+    TEST("chain presets survive being written and re-read");
+
+    library::ChainStore store;
+    store.open("acomposter-test-chains");
+
+    library::ChainPreset preset;
+    preset.name = "tight bass";
+
+    library::ChainPlugin plugin;
+    plugin.name = "Test Gain";
+    plugin.path = "C:\\vstplugins\\TestGain.dll";
+    plugin.uniqueId = 0x54475831;
+    plugin.state = { 0x00, 0x01, 0x02, 0xFF, 0x80 };
+    preset.plugins.push_back(plugin);
+
+    library::ChainPlugin second;
+    second.name = "No State";
+    second.path = "C:\\vstplugins\\Other.dll";
+    second.parameters = { 0.25f, 0.5f, 0.75f };
+    preset.plugins.push_back(second);
+
+    CHECK(store.save(preset));
+
+    library::ChainPreset loaded;
+    CHECK(store.load("tight bass", loaded));
+    CHECK(loaded.name == "tight bass");
+    CHECK(loaded.plugins.size() == 2);
+
+    // Opaque plugin state has to come back byte for byte; it is the whole
+    // reason a preset is worth more than a plugin list.
+    CHECK(loaded.plugins[0].state.size() == 5);
+    CHECK(loaded.plugins[0].state[3] == 0xFF);
+    CHECK(loaded.plugins[0].uniqueId == 0x54475831);
+
+    CHECK(loaded.plugins[1].parameters.size() == 3);
+    CHECK_CLOSE(loaded.plugins[1].parameters[2], 0.75, 1e-6);
+
+    const auto names = store.names();
+    CHECK(std::find(names.begin(), names.end(), "tight bass") != names.end());
 }
 
 void testStemSectionLaunch() {
@@ -1429,6 +1544,9 @@ int main() {
     testLibraryMultipleMembership();
     testLibraryTagging();
     testLibrarySurvivesBadEntry();
+    testStemTagRouting();
+    testStemRoutingPersists();
+    testChainPresetRoundTrip();
     testStemSectionLaunch();
     testStemImmediateLaunch();
     testStemSectionPersistence();

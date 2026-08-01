@@ -24,6 +24,7 @@
 #include "../dsp/Dsp.h"
 
 #include <array>
+#include <utility>
 #include <atomic>
 #include <memory>
 #include <string>
@@ -70,6 +71,31 @@ public:
     // The longest loaded stem, which is what the section editor lays bars out
     // against. Zero when nothing is loaded.
     double songLengthBars(double bpm, int beatsPerBar) const;
+
+    // -- routing -----------------------------------------------------------
+    // Which output a stem lands on. Several stems can share one, which is the
+    // point: a tag is a category, and a category is a bus.
+    //
+    // A stem's tag decides its output by default, so tagging a folder of stems
+    // routes them without any further work. An explicit route overrides that,
+    // because the first time a song has two things tagged "pads" that need
+    // separate treatment, a rule with no exception is a rule you have to fight.
+    void setStemTag(int slot, std::string tagId);
+    const std::string& stemTag(int slot) const;
+
+    // -1 means "follow the tag".
+    void setStemRoute(int slot, int output);
+    int stemRoute(int slot) const;
+    // Where the stem actually goes, after the tag and the override are resolved.
+    int resolvedRoute(int slot) const;
+
+    // Told by the application when the palette changes, so the node can resolve
+    // tags to outputs without knowing what a library is.
+    void setTagRouting(const std::vector<std::pair<std::string, int>>& tagToOutput);
+
+    // Drawn open, the matrix panel hangs off the right of the node. A view
+    // preference, so it travels with the patch.
+    bool matrixOpen = false;
 
     // -- tempo -------------------------------------------------------------
     // The tempo the stems were bounced at. Everything the node does with the
@@ -176,6 +202,16 @@ private:
                               int buckets);
 
     std::array<Stem, kMaxStems> stems_;
+
+    // Message-thread routing state, published to the audio thread as a plain
+    // array of ints - small enough that a torn read cannot do worse than send
+    // one block of one stem to the wrong bus.
+    std::array<std::string, kMaxStems> stemTag_;
+    std::array<int, kMaxStems> routeOverride_{};
+    std::array<std::atomic<int>, kMaxStems> resolvedRoute_{};
+    std::vector<std::pair<std::string, int>> tagRouting_;
+
+    void republishRouting();
 
     double stemBpm_ = 0.0;          // 0 = follow the project tempo
     std::string tempoSource_ = "project";

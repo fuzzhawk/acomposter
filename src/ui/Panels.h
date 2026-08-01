@@ -10,6 +10,7 @@
 #include "../core/Engine.h"
 #include "../core/FileIo.h"
 #include "../meta/Metasurface.h"
+#include "../library/Library.h"
 #include "../platform/AudioDevice.h"
 #include "../vst2/PluginManager.h"
 #include "Ui.h"
@@ -62,7 +63,7 @@ private:
 
 class InspectorView {
 public:
-    void initialise(Engine* engine, Metasurface* metasurface);
+    void initialise(Engine* engine, Metasurface* metasurface, library::Library* library);
 
     // `node` is whatever the patcher currently has focused.
     void render(Ui& ui, const Rect& bounds, NodeId node);
@@ -77,6 +78,11 @@ public:
     std::function<void(NodeId stemPlayer)> onTidyChains;
     // Copies one stem's rack onto another, plugin state included.
     std::function<void(NodeId stemPlayer, int fromSlot, int toSlot)> onCopyChain;
+    // Raised when a stem is given a tag, so the application can offer to build
+    // that tag's default rack. Offered rather than done: building a rack loads
+    // plugins and takes a moment, and a mistagged file should not silently
+    // instantiate four of them.
+    std::function<void(NodeId stemPlayer, int slot, const std::string& tagId)> onStemTagged;
 
 private:
     void drawParameterList(Ui& ui, Rect area, Node& node);
@@ -91,6 +97,7 @@ private:
 
     Engine* engine_ = nullptr;
     Metasurface* metasurface_ = nullptr;
+    library::Library* library_ = nullptr;
 
     std::string nameBuffer_;
     NodeId nameBufferFor_ = kInvalidNode;

@@ -27,19 +27,26 @@ void TagPalette::loadDefaults() {
 
     // Ordered the way a mix is usually built rather than alphabetically, so the
     // palette reads as a session rather than as a list.
-    const struct { const char* name; std::uint32_t colour; } defaults[] = {
-        { "drums mixed",      0xFFE0533Cu },
-        { "kick",             0xFFC43A2Eu },
-        { "snare",            0xFFE07A3Cu },
-        { "percussion",       0xFFE0A93Cu },
-        { "bass",             0xFF9B5DE5u },
-        { "synth leads",      0xFF3CC8E0u },
-        { "pads",             0xFF3C7AE0u },
-        { "vocals",           0xFF4FD98Au },
-        { "fx",               0xFF8A8F98u },
+    // Output slots are assigned here rather than left unset, so a freshly
+    // tagged folder of stems is already routed. Kick and snare share the drum
+    // bus by default because most sessions want them together until they do
+    // not, and moving one is a single click.
+    const struct { const char* name; std::uint32_t colour; int output; } defaults[] = {
+        { "drums mixed",      0xFFE0533Cu, 0 },
+        { "kick",             0xFFC43A2Eu, 0 },
+        { "snare",            0xFFE07A3Cu, 0 },
+        { "percussion",       0xFFE0A93Cu, 6 },
+        { "bass",             0xFF9B5DE5u, 1 },
+        { "synth leads",      0xFF3CC8E0u, 2 },
+        { "pads",             0xFF3C7AE0u, 3 },
+        { "vocals",           0xFF4FD98Au, 5 },
+        { "fx",               0xFF8A8F98u, 6 },
     };
 
-    for (const auto& entry : defaults) add(entry.name, entry.colour);
+    for (const auto& entry : defaults) {
+        const std::string id = add(entry.name, entry.colour);
+        setOutputSlot(indexOf(id), entry.output);
+    }
 }
 
 const Tag* TagPalette::find(const std::string& id) const {
@@ -119,6 +126,7 @@ JsonValue TagPalette::toJson() const {
         std::snprintf(colour, sizeof(colour), "0x%08X", tag.colour);
         entry.set("colour", colour);
         entry.set("outputSlot", tag.outputSlot);
+        if (!tag.defaultChain.empty()) entry.set("defaultChain", tag.defaultChain);
         array.push(entry);
     }
     root.set("tags", array);
@@ -144,6 +152,7 @@ void TagPalette::fromJson(const JsonValue& value) {
             : static_cast<std::uint32_t>(std::strtoul(colour.c_str(), nullptr, 0));
 
         tag.outputSlot = entry.getInt("outputSlot", -1);
+        tag.defaultChain = entry.getString("defaultChain");
         tags_.push_back(std::move(tag));
     }
 }

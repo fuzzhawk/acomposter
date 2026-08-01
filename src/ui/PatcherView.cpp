@@ -122,7 +122,12 @@ float PatcherView::nodeWidth(const Node& node) const {
 
     if (node.typeName() == "sample.player" || node.typeName() == "looper") return 230.0f;
     // Wide enough for a row of section buttons and a column of stem strips.
-    if (node.typeName() == "stem.player") return 460.0f;
+    if (node.typeName() == "stem.player") {
+        // The matrix hangs off the right rather than replacing anything, so the
+        // strips stay readable while routing is being changed.
+        const auto& stems = static_cast<const StemPlayerNode&>(node);
+        return stems.matrixOpen ? 460.0f + 250.0f : 460.0f;
+    }
     if (node.typeName() == "color") return 260.0f;
     if (node.typeName() == "build") return 250.0f;
     if (node.typeName().rfind("mixer.", 0) == 0) {
@@ -1254,6 +1259,21 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
 
     tempoRow.removeFromLeft(s * 3.0f);
 
+    // The matrix toggle is carved off the right *before* anything is drawn into
+    // what remains. Drawing it afterwards left it underneath the button beside
+    // it, and an overlapped control never sees the press - the widget drawn
+    // first claims it.
+    const Rect matrixToggle = tempoRow.removeFromRight(s * 22.0f);
+    tempoRow.removeFromRight(s * 3.0f);
+
+    if (ui.button(ui.idFrom(&node, 422), matrixToggle,
+                  stems.matrixOpen ? "<" : ">",
+                  stems.matrixOpen ? Ui::ButtonStyle::Toggle : Ui::ButtonStyle::Normal,
+                  stems.matrixOpen))
+        stems.matrixOpen = !stems.matrixOpen;
+    if (ui.isHot(ui.idFrom(&node, 422)))
+        ui.setTooltip("Show the routing matrix");
+
     // Pushes the stem tempo onto the project, which is what you want once the
     // stems are the thing everything else has to line up with.
     if (ui.button(ui.idFrom(&node, 421), tempoRow, "to project",
@@ -1267,9 +1287,19 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
     if (ui.isHot(ui.idFrom(&node, 421)))
         ui.setTooltip("Set the project tempo from this stem player");
 
+
     area.removeFromTop(s * 4.0f);
 
     // -- stem strips -------------------------------------------------------
+    // -- routing matrix ----------------------------------------------------
+    // Carved off the right before anything else is laid out, so opening it
+    // never reflows the strips.
+    Rect matrixArea;
+    if (stems.matrixOpen) {
+        matrixArea = area.removeFromRight(s * 244.0f);
+        area.removeFromRight(s * 6.0f);
+    }
+
     // The bar the whole song spans, so section markers can be laid on the
     // strips in the same coordinates the playheads move through.
     const double songSeconds = [&] {
@@ -1397,6 +1427,83 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
         }
 
         list.addRect(strip, t.border.withAlpha(0.5f), 1.0f, 2.0f);
+    }
+
+    if (stems.matrixOpen) drawStemMatrix(ui, stems, matrixArea);
+}
+
+void PatcherView::drawStemMatrix(Ui& ui, StemPlayerNode& stems, const Rect& bounds) {
+    const float s = bodyScale();
+    const Theme& t = theme();
+    DrawList& list = ui.draw();
+
+    list.addRectFilled(bounds, t.panelSunken, t.cornerRadius);
+    list.addRect(bounds, t.border, 1.0f, t.cornerRadius);
+
+    Rect area = bounds.deflated(s * 4.0f);
+    list.addTextClipped(ui.font(t.fontSmall), area.removeFromTop(s * 14.0f), t.textDim,
+                        "routing");
+
+    // Column headings: one per output. A stem lands on whichever cell is lit,
+    // and several stems lighting the same column is the normal case rather than
+    // a clash - that is what a bus is.
+    Rect headerRow = area.removeFromTop(s * 12.0f);
+    headerRow.removeFromLeft(s * 52.0f);
+    const float cellWidth = headerRow.width / static_cast<float>(kMaxStems);
+
+    for (int output = 0; output < kMaxStems; ++output) {
+        list.addTextClipped(ui.font(t.fontSmall), headerRow.removeFromLeft(cellWidth),
+                            t.textFaint, std::to_string(output + 1),
+                            DrawList::Align::Centre);
+    }
+
+    area.removeFromTop(s * 2.0f);
+
+    for (int slot = 0; slot < kMaxStems; ++slot) {
+        if (area.height < s * 20.0f) break;
+        Rect row = area.removeFromTop(s * 19.0f);
+
+        const bool loaded = stems.stemLoaded(slot);
+        const int resolved = stems.resolvedRoute(slot);
+        const bool overridden = stems.stemRoute(slot) >= 0;
+
+        // The per-stem level, right where the routing is decided - the two
+        // questions asked together when a bus is being balanced.
+        const Rect knob = row.removeFromLeft(s * 22.0f);
+        ui.parameterKnob(knob, stems.parameter(
+            stems.indexOfParameter("gain" + std::to_string(slot + 1))), t.accentDim);
+
+        const Rect nameArea = row.removeFromLeft(s * 30.0f);
+        list.addTextClipped(ui.font(t.fontSmall), nameArea,
+                            loaded ? t.textDim : t.textFaint,
+                            stems.stemName(slot).substr(0, 3));
+
+        const float width = row.width / static_cast<float>(kMaxStems);
+        for (int output = 0; output < kMaxStems; ++output) {
+            Rect cell = row.removeFromLeft(width).deflated(s * 1.5f);
+
+            const bool on = resolved == output;
+            bool hovered = false, held = false;
+            if (ui.buttonBehaviour(ui.idFrom(&stems, 1200 + slot * kMaxStems + output),
+                                   cell, hovered, held)) {
+                // Clicking the lit cell clears the override and hands the stem
+                // back to its tag; clicking any other sets one.
+                stems.setStemRoute(slot, on && overridden ? -1 : output);
+            }
+
+            Colour fill = on ? (overridden ? t.control.withAlpha(0.7f) : t.accent.withAlpha(0.6f))
+                             : t.widgetBackground;
+            if (hovered) fill = fill.brightened(1.4f);
+            list.addRectFilled(cell, fill, 2.0f);
+
+            if (hovered) {
+                ui.setTooltip(on && overridden
+                    ? "Pinned here - click to hand it back to the tag"
+                    : on ? "Routed here by its tag"
+                         : "Pin " + stems.stemName(slot) + " to output "
+                               + std::to_string(output + 1));
+            }
+        }
     }
 }
 

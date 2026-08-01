@@ -18,6 +18,13 @@ constexpr const char* kDefaultStemNames[kMaxStems] = {
 } // namespace
 
 StemPlayerNode::StemPlayerNode() : Node("stem.player", NodeCategory::Source) {
+    // Every stem starts on its own output, which is what it did before routing
+    // existed and is the least surprising thing for an untagged set.
+    for (int i = 0; i < kMaxStems; ++i) {
+        routeOverride_[static_cast<std::size_t>(i)] = -1;
+        resolvedRoute_[static_cast<std::size_t>(i)].store(i, std::memory_order_relaxed);
+    }
+
     for (int i = 0; i < kMaxStems; ++i) {
         addOutput(kDefaultStemNames[i], 2);
         stems_[static_cast<std::size_t>(i)].name = kDefaultStemNames[i];
@@ -170,6 +177,70 @@ float StemPlayerNode::meterLevel(int slot, int channel) const noexcept {
         .load(std::memory_order_relaxed);
 }
 
+
+// ---------------------------------------------------------------------------
+// Routing
+// ---------------------------------------------------------------------------
+
+void StemPlayerNode::setStemTag(int slot, std::string tagId) {
+    if (slot < 0 || slot >= kMaxStems) return;
+    stemTag_[static_cast<std::size_t>(slot)] = std::move(tagId);
+    republishRouting();
+}
+
+const std::string& StemPlayerNode::stemTag(int slot) const {
+    static const std::string empty;
+    if (slot < 0 || slot >= kMaxStems) return empty;
+    return stemTag_[static_cast<std::size_t>(slot)];
+}
+
+void StemPlayerNode::setStemRoute(int slot, int output) {
+    if (slot < 0 || slot >= kMaxStems) return;
+    routeOverride_[static_cast<std::size_t>(slot)] =
+        output < 0 ? -1 : clampValue(output, 0, kMaxStems - 1);
+    republishRouting();
+}
+
+int StemPlayerNode::stemRoute(int slot) const {
+    if (slot < 0 || slot >= kMaxStems) return -1;
+    return routeOverride_[static_cast<std::size_t>(slot)];
+}
+
+int StemPlayerNode::resolvedRoute(int slot) const {
+    if (slot < 0 || slot >= kMaxStems) return 0;
+    return resolvedRoute_[static_cast<std::size_t>(slot)].load(std::memory_order_relaxed);
+}
+
+void StemPlayerNode::setTagRouting(const std::vector<std::pair<std::string, int>>& tagToOutput) {
+    tagRouting_ = tagToOutput;
+    republishRouting();
+}
+
+void StemPlayerNode::republishRouting() {
+    for (int slot = 0; slot < kMaxStems; ++slot) {
+        // The override wins outright when it is set.
+        int route = routeOverride_[static_cast<std::size_t>(slot)];
+
+        if (route < 0) {
+            const std::string& tag = stemTag_[static_cast<std::size_t>(slot)];
+            if (!tag.empty()) {
+                for (const auto& entry : tagRouting_) {
+                    if (entry.first == tag && entry.second >= 0) {
+                        route = clampValue(entry.second, 0, kMaxStems - 1);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Untagged, or tagged with something that has no output: stay where you
+        // are. Silently collapsing everything onto output one would be worse
+        // than doing nothing.
+        if (route < 0) route = slot;
+
+        resolvedRoute_[static_cast<std::size_t>(slot)].store(route, std::memory_order_relaxed);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Tempo
@@ -345,6 +416,7 @@ void StemPlayerNode::addSection(StemSection section) {
     if (static_cast<int>(sections_.size()) >= kMaxSections) return;
     sections_.push_back(std::move(section));
     sectionTable_.publish(makeTable(sections_));
+    republishRouting();
 }
 
 void StemPlayerNode::removeSection(int index) {
@@ -362,11 +434,13 @@ void StemPlayerNode::updateSection(int index, const StemSection& section) {
     if (index < 0 || index >= static_cast<int>(sections_.size())) return;
     sections_[static_cast<std::size_t>(index)] = section;
     sectionTable_.publish(makeTable(sections_));
+    republishRouting();
 }
 
 void StemPlayerNode::clearSections() {
     sections_.clear();
     sectionTable_.publish(makeTable(sections_));
+    republishRouting();
 }
 
 void StemPlayerNode::requestSection(int index) noexcept {
@@ -602,9 +676,15 @@ void StemPlayerNode::process(ProcessContext& ctx) {
             const float left = readStem(*buffer, 0, position) * gain;
             const float right = readStem(*buffer, 1, position) * gain;
 
-            AudioBus& out = ctx.output(slot);
-            if (out.numChannels > 0) out.chan(0)[i] = left;
-            if (out.numChannels > 1) out.chan(1)[i] = right;
+            // Several stems can land on one output, so this sums rather than
+            // assigns. The buses were cleared at the top of the block.
+            const int route = clampValue(
+                resolvedRoute_[static_cast<std::size_t>(slot)].load(std::memory_order_relaxed),
+                0, kMaxStems - 1);
+
+            AudioBus& out = ctx.output(route);
+            if (out.numChannels > 0) out.chan(0)[i] += left;
+            if (out.numChannels > 1) out.chan(1)[i] += right;
 
             lastPosition[slot] = position / static_cast<double>(std::max<std::int64_t>(1, buffer->frames()));
 
@@ -657,6 +737,8 @@ void StemPlayerNode::saveExtraState(JsonValue& out) const {
         entry.set("slot", slot);
         entry.set("path", stems_[static_cast<std::size_t>(slot)].path);
         entry.set("name", stems_[static_cast<std::size_t>(slot)].name);
+        entry.set("tag", stemTag_[static_cast<std::size_t>(slot)]);
+        entry.set("route", routeOverride_[static_cast<std::size_t>(slot)]);
         stems.push(entry);
     }
     out.set("stems", stems);
@@ -671,6 +753,7 @@ void StemPlayerNode::saveExtraState(JsonValue& out) const {
         sections.push(entry);
     }
     out.set("sections", sections);
+    out.set("matrixOpen", matrixOpen);
     out.set("stemBpm", stemBpm_);
     out.set("tempoSource", tempoSource_);
 }
@@ -681,6 +764,9 @@ void StemPlayerNode::loadExtraState(const JsonValue& in) {
             const JsonValue& entry = stems->at(i);
             const int slot = entry.getInt("slot", static_cast<int>(i));
             if (slot < 0 || slot >= kMaxStems) continue;
+
+            stemTag_[static_cast<std::size_t>(slot)] = entry.getString("tag");
+            routeOverride_[static_cast<std::size_t>(slot)] = entry.getInt("route", -1);
 
             const std::string name = entry.getString("name");
             if (!name.empty()) stems_[static_cast<std::size_t>(slot)].name = name;
@@ -693,6 +779,7 @@ void StemPlayerNode::loadExtraState(const JsonValue& in) {
         }
     }
 
+    matrixOpen = in.getBool("matrixOpen", false);
     stemBpm_ = in.getDouble("stemBpm", 0.0);
     tempoSource_ = in.getString("tempoSource", "project");
 
@@ -709,6 +796,7 @@ void StemPlayerNode::loadExtraState(const JsonValue& in) {
         }
     }
     sectionTable_.publish(makeTable(sections_));
+    republishRouting();
 }
 
 namespace {

@@ -248,9 +248,11 @@ void BrowserView::render(Ui& ui, const Rect& bounds) {
 // InspectorView
 // ---------------------------------------------------------------------------
 
-void InspectorView::initialise(Engine* engine, Metasurface* metasurface) {
+void InspectorView::initialise(Engine* engine, Metasurface* metasurface,
+                               library::Library* library) {
     engine_ = engine;
     metasurface_ = metasurface;
+    library_ = library;
 }
 
 void InspectorView::drawPluginSection(Ui& ui, Rect& area, Node& node) {
@@ -378,6 +380,15 @@ void InspectorView::drawStemChains(Ui& ui, Rect& area, Node& node) {
     if (ui.button(ui.id("inspector.chains.tidy"), header.removeFromRight(46.0f), "tidy",
                   Ui::ButtonStyle::Normal) && onTidyChains)
         onTidyChains(node.id());
+    header.removeFromRight(6.0f);
+
+    // The same toggle as the one on the node, in a panel with no clipping and
+    // nothing overlapping it. The node-body button is the convenient one; this
+    // is the one that is certain to work.
+    bool matrixOpen = stems->matrixOpen;
+    if (ui.checkbox(ui.id("inspector.chains.matrix"), header.removeFromRight(70.0f),
+                    "matrix", matrixOpen))
+        stems->matrixOpen = matrixOpen;
     if (ui.isHot(ui.id("inspector.chains.tidy")))
         ui.setTooltip("Lay the racks out in rows beside the stem player");
 
@@ -431,14 +442,68 @@ void InspectorView::drawStemChains(Ui& ui, Rect& area, Node& node) {
             expandedStem_ = expanded ? -1 : slot;
         if (hovered) ui.draw().addRectFilled(row, t.widgetHover, t.cornerRadius);
 
-        char label[128];
-        std::snprintf(label, sizeof(label), "%s  -  %d effect%s",
-                      stems->stemName(slot).c_str(), static_cast<int>(chain.size()),
-                      chain.size() == 1 ? "" : "s");
+        // The stem's tag leads the row: it is what decides the output and the
+        // rack, so it belongs next to both rather than in a separate panel.
+        const Rect swatch = row.removeFromLeft(12.0f);
+        row.removeFromLeft(4.0f);
+
+        const std::string tagId = stems->stemTag(slot);
+        if (library_) {
+            if (const library::Tag* tag = library_->palette().find(tagId)) {
+                ui.draw().addRectFilled(swatch.deflated(2.0f),
+                                        Colour{ static_cast<float>((tag->colour >> 16) & 0xFF) / 255.0f,
+                                                static_cast<float>((tag->colour >> 8) & 0xFF) / 255.0f,
+                                                static_cast<float>(tag->colour & 0xFF) / 255.0f, 1.0f },
+                                        2.0f);
+            } else {
+                ui.draw().addRect(swatch.deflated(2.0f), t.border, 1.0f, 2.0f);
+            }
+        }
+
+        char label[160];
+        std::snprintf(label, sizeof(label), "%s  ->  out %d  -  %d effect%s",
+                      stems->stemName(slot).c_str(), stems->resolvedRoute(slot) + 1,
+                      static_cast<int>(chain.size()), chain.size() == 1 ? "" : "s");
         ui.draw().addTextClipped(ui.font(t.fontSmall), row,
                                  chain.empty() ? t.textFaint : t.textDim, label);
 
         if (!expanded) continue;
+
+        // Tag chips for this stem, which is where routing is actually decided:
+        // the tag picks the output unless the matrix has pinned it.
+        if (library_ && area.height >= 24.0f) {
+            Rect tagRow = area.removeFromTop(20.0f);
+            tagRow.removeFromLeft(14.0f);
+
+            const library::TagPalette& palette = library_->palette();
+            for (int i = 0; i < palette.count() && tagRow.width > 30.0f; ++i) {
+                const library::Tag& tag = palette.tags()[static_cast<std::size_t>(i)];
+                const float width = std::min(
+                    ui.font(t.fontSmall).textWidth(tag.name) + 12.0f, tagRow.width);
+
+                Rect chip = tagRow.removeFromLeft(width);
+                tagRow.removeFromLeft(2.0f);
+
+                const bool isCurrent = tag.id == tagId;
+                const Colour colour{ static_cast<float>((tag.colour >> 16) & 0xFF) / 255.0f,
+                                     static_cast<float>((tag.colour >> 8) & 0xFF) / 255.0f,
+                                     static_cast<float>(tag.colour & 0xFF) / 255.0f, 1.0f };
+
+                bool tagHovered = false, tagHeld = false;
+                if (ui.buttonBehaviour(ui.idFrom(&node, 1300 + slot * 32 + i),
+                                       chip, tagHovered, tagHeld)) {
+                    stems->setStemTag(slot, isCurrent ? std::string() : tag.id);
+                    if (onStemTagged && !isCurrent) onStemTagged(node.id(), slot, tag.id);
+                }
+
+                Colour fill = isCurrent ? colour.withAlpha(0.5f) : colour.withAlpha(0.14f);
+                if (tagHovered) fill = fill.brightened(1.35f);
+                ui.draw().addRectFilled(chip, fill, 2.0f);
+                ui.draw().addTextClipped(ui.font(t.fontSmall), chip,
+                                         isCurrent ? t.text : t.textFaint, tag.name,
+                                         DrawList::Align::Centre);
+            }
+        }
 
         for (NodeId inChain : chain) {
             if (area.height < 26.0f) break;

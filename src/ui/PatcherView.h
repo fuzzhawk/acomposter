@@ -15,6 +15,7 @@
 #include <vector>
 
 namespace acm::vst2 { class PluginManager; struct PluginDescription; }
+namespace acm { class StemPlayerNode; }
 
 namespace acm::ui {
 
@@ -133,6 +134,7 @@ private:
     void drawNodeBody(Ui& ui, Node& node, const Rect& body);
     void drawSamplePlayerBody(Ui& ui, Node& node, const Rect& body);
     void drawStemPlayerBody(Ui& ui, Node& node, const Rect& body);
+    void drawStemMatrix(Ui& ui, StemPlayerNode& stems, const Rect& bounds);
     void drawColorBody(Ui& ui, Node& node, const Rect& body);
     void drawBuildBody(Ui& ui, Node& node, const Rect& body);
     void drawLooperBody(Ui& ui, Node& node, const Rect& body);
