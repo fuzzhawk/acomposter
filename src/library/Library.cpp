@@ -94,6 +94,8 @@ bool Library::open(const std::string& utf8RootDirectory, int* outSkipped) {
         palette_.save(palettePath);
     }
 
+    chains_.open(root_);
+
     for (const DirectoryEntry& file : listDirectory(entriesDirectory, { kEntryExtension })) {
         if (file.isDirectory) continue;
 

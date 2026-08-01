@@ -85,6 +85,10 @@ public:
     std::function<void(NodeId stemPlayer, int slot, const std::string& tagId)> onStemTagged;
     // Copies the stem player's current selection into a build node.
     std::function<void(NodeId stemPlayer, NodeId buildNode)> onSendSnippet;
+    // Stores a stem's rack under a name, and puts a stored one back. Both go
+    // through the application because both touch the plugin host.
+    std::function<void(NodeId stemPlayer, int slot, const std::string& name)> onSaveChain;
+    std::function<void(NodeId stemPlayer, int slot, const std::string& name)> onLoadChain;
 
 private:
     void drawParameterList(Ui& ui, Rect area, Node& node);
@@ -112,6 +116,12 @@ private:
     // Source slot armed by 'copy', waiting for a destination.
     int copySourceStem_ = -1;
     std::string sectionNameBuffer_;
+
+    // The name being typed for a rack about to be saved, and which stem it
+    // belongs to. Held per-stem rather than globally so opening a second rack
+    // while typing does not silently retarget the save.
+    int savingStem_ = -1;
+    std::string chainNameBuffer_;
 };
 
 // ---------------------------------------------------------------------------

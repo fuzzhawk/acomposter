@@ -549,6 +549,107 @@ int PatcherView::copyStemChain(NodeId stemPlayer, int fromSlot, int toSlot) {
     return copied;
 }
 
+library::ChainPreset PatcherView::captureStemChain(NodeId stemPlayer, int stemSlot,
+                                                  std::string name) const {
+    library::ChainPreset preset;
+    preset.name = std::move(name);
+    if (!engine_) return preset;
+
+    const Graph& graph = engine_->graph();
+    for (NodeId id : downstreamChain(graph, stemPlayer, static_cast<PortIndex>(stemSlot))) {
+        const auto* plugin = dynamic_cast<const vst2::VstNode*>(graph.node(id));
+        if (!plugin) continue;
+
+        library::ChainPlugin entry;
+        const vst2::PluginDescription& description = plugin->pluginDescription();
+        entry.path = description.path;
+        entry.name = description.name;
+        entry.uniqueId = description.uniqueId;
+        entry.bridged = plugin->bridged();
+
+        // The chunk where the plugin offers one, the parameter list otherwise.
+        // Storing both would double the size of the file for nothing: a plugin
+        // that uses chunks ignores the parameters on the way back in.
+        if (vst2::Vst2Plugin* live = const_cast<vst2::VstNode*>(plugin)->plugin()) {
+            entry.state = live->saveState();
+            if (entry.state.empty()) {
+                entry.parameters.reserve(static_cast<std::size_t>(live->parameterCount()));
+                for (int p = 0; p < live->parameterCount(); ++p)
+                    entry.parameters.push_back(live->parameterValue(p));
+            }
+        }
+
+        preset.plugins.push_back(std::move(entry));
+    }
+
+    return preset;
+}
+
+int PatcherView::applyStemChain(NodeId stemPlayer, int stemSlot,
+                                const library::ChainPreset& preset,
+                                std::vector<std::string>* outMissing) {
+    if (!engine_ || !plugins_) return 0;
+
+    Graph& graph = engine_->graph();
+    if (const Node* player = graph.node(stemPlayer)) {
+        if (stemSlot < 0 || stemSlot >= player->numOutputs()) return 0;
+    } else {
+        return 0;
+    }
+
+    // Tear the old rack down first, back to front so each removal closes its own
+    // gap rather than leaving the next one dangling.
+    const std::vector<NodeId> existing =
+        downstreamChain(graph, stemPlayer, static_cast<PortIndex>(stemSlot));
+    for (auto it = existing.rbegin(); it != existing.rend(); ++it)
+        if (dynamic_cast<vst2::VstNode*>(graph.node(*it))) removeFromChain(*it);
+
+    int placed = 0;
+    for (const library::ChainPlugin& entry : preset.plugins) {
+        // Path first, unique id second. A library carried to another machine
+        // keeps its ids and loses its paths, and that is the case worth
+        // surviving; the reverse - the same path holding a different plugin -
+        // is the case worth refusing.
+        const vst2::PluginDescription* description = nullptr;
+        for (const vst2::PluginDescription& candidate : plugins_->plugins()) {
+            if (candidate.path == entry.path) { description = &candidate; break; }
+        }
+        if (!description && entry.uniqueId != 0) {
+            for (const vst2::PluginDescription& candidate : plugins_->plugins()) {
+                if (candidate.uniqueId == entry.uniqueId) { description = &candidate; break; }
+            }
+        }
+
+        if (!description) {
+            if (outMissing) outMissing->push_back(entry.name.empty() ? entry.path : entry.name);
+            continue;
+        }
+
+        const NodeId added = addToStemChain(stemPlayer, stemSlot, *description, entry.bridged);
+        if (added == kInvalidNode) {
+            if (outMissing) outMissing->push_back(entry.name);
+            continue;
+        }
+
+        if (auto* node = dynamic_cast<vst2::VstNode*>(graph.node(added))) {
+            if (vst2::Vst2Plugin* live = node->plugin()) {
+                if (!entry.state.empty()) live->restoreState(entry.state);
+                else {
+                    const int count = std::min(static_cast<int>(entry.parameters.size()),
+                                               live->parameterCount());
+                    for (int p = 0; p < count; ++p)
+                        live->setParameterValue(p, entry.parameters[static_cast<std::size_t>(p)]);
+                }
+                node->refreshParametersFromPlugin();
+            }
+        }
+        ++placed;
+    }
+
+    tidyStemChains(stemPlayer);
+    return placed;
+}
+
 void PatcherView::tidyStemChains(NodeId stemPlayer) {
     if (!engine_) return;
 

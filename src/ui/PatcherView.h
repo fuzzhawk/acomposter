@@ -8,6 +8,7 @@
 #pragma once
 
 #include "../core/Engine.h"
+#include "../library/ChainPreset.h"
 #include "../meta/Metasurface.h"
 #include "Ui.h"
 
@@ -84,6 +85,22 @@ public:
 
     // Lays a stem player's racks out in tidy rows to the right of it.
     void tidyStemChains(NodeId stemPlayer);
+
+    // -- chain presets -----------------------------------------------------
+    // The rack on one stem, captured as something nameable and portable. Plugin
+    // state comes out with it, because a chain that arrives at its defaults is
+    // a list of plugin names, not a sound.
+    library::ChainPreset captureStemChain(NodeId stemPlayer, int stemSlot,
+                                          std::string name) const;
+
+    // Replaces the rack on a stem with the preset's. Returns how many plugins
+    // were placed; names that could not be resolved are appended to `outMissing`
+    // rather than quietly skipped, so a chain that is short is a chain that says
+    // why. The existing rack is torn down first - applying a preset means the
+    // stem sounds like the preset, not like the preset stacked on whatever was
+    // there.
+    int applyStemChain(NodeId stemPlayer, int stemSlot, const library::ChainPreset& preset,
+                       std::vector<std::string>* outMissing);
 
     // Loads a sample into the player under the pointer, or makes a new player.
     // Used by both the file browser and Windows drag-and-drop.

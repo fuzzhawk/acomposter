@@ -18,6 +18,7 @@
 #pragma once
 
 #include "../core/Json.h"
+#include "ChainPreset.h"
 #include "TagPalette.h"
 
 #include <cstdint>
@@ -113,6 +114,13 @@ public:
     std::string tagForFile(const std::string& path) const;
     bool setTagForFile(const std::string& path, const std::string& tagId);
 
+    // -- chains ------------------------------------------------------------
+    // Saved plugin racks live beside the tags because they are the other half
+    // of the same idea: a tag says what a stem is, and the chain it names says
+    // how that kind of stem gets treated. Carrying one folder carries both.
+    ChainStore& chains() noexcept { return chains_; }
+    const ChainStore& chains() const noexcept { return chains_; }
+
     // -- search ------------------------------------------------------------
     // Name, notes and file names, case insensitive. Tag filtering is by id.
     std::vector<const Entry*> search(const std::string& text, EntryKind kind) const;
@@ -127,6 +135,7 @@ private:
     std::string root_;
     std::vector<Entry> entries_;
     TagPalette palette_;
+    ChainStore chains_;
 };
 
 } // namespace acm::library

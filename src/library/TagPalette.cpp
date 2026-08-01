@@ -102,6 +102,11 @@ void TagPalette::setOutputSlot(int index, int slot) {
     tags_[static_cast<std::size_t>(index)].outputSlot = slot;
 }
 
+void TagPalette::setDefaultChain(int index, std::string chainName) {
+    if (index < 0 || index >= count()) return;
+    tags_[static_cast<std::size_t>(index)].defaultChain = std::move(chainName);
+}
+
 void TagPalette::move(int from, int to) {
     if (from < 0 || from >= count() || to < 0 || to >= count() || from == to) return;
     Tag tag = tags_[static_cast<std::size_t>(from)];

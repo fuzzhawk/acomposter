@@ -1198,6 +1198,64 @@ void testChainPresetRoundTrip() {
     CHECK(std::find(names.begin(), names.end(), "tight bass") != names.end());
 }
 
+void testChainStoreNamesSurviveSanitising() {
+    TEST("a chain name that is not a file name still loads back");
+
+    const std::string root = "acomposter-test-tmp/chains-2";
+    for (const DirectoryEntry& file : listDirectory(pathJoin(root, "chains"), { ".json" }))
+        deleteFile(file.fullPath);
+
+    library::ChainStore store;
+    store.open(root);
+
+    // The name comes from a text field, so it can contain anything. It is
+    // sanitised on the way to disk, and the display name is read back out of
+    // the file - which is the only reason loading by the name the user typed
+    // works at all.
+    library::ChainPreset preset;
+    preset.name = "drums: bus / glue";
+    preset.plugins.push_back({});
+    preset.plugins.back().name = "Comp";
+    preset.plugins.back().path = "C:\\vst\\Comp.dll";
+    CHECK(store.save(preset));
+
+    const auto names = store.names();
+    CHECK(std::find(names.begin(), names.end(), "drums: bus / glue") != names.end());
+
+    library::ChainPreset loaded;
+    CHECK(store.load("drums: bus / glue", loaded));
+    CHECK(loaded.plugins.size() == 1);
+
+    CHECK(store.remove("drums: bus / glue"));
+    CHECK(!store.load("drums: bus / glue", loaded));
+}
+
+void testLibraryOpensItsChainStore() {
+    TEST("a library carries its chains as well as its tags");
+
+    const std::string root = "acomposter-test-tmp/library-5";
+    clearTestLibrary(root);
+    for (const DirectoryEntry& file : listDirectory(pathJoin(root, "chains"), { ".json" }))
+        deleteFile(file.fullPath);
+
+    library::Library lib;
+    CHECK(lib.open(root));
+    CHECK(lib.chains().isOpen());
+
+    library::ChainPreset preset;
+    preset.name = "pad wash";
+    preset.plugins.push_back({});
+    preset.plugins.back().name = "Verb";
+    CHECK(lib.chains().save(preset));
+
+    // Reopening the same directory has to find it: chains living beside the
+    // tags is the whole reason a library folder is portable.
+    library::Library reopened;
+    CHECK(reopened.open(root));
+    const auto names = reopened.chains().names();
+    CHECK(std::find(names.begin(), names.end(), "pad wash") != names.end());
+}
+
 void testStemSectionLaunch() {
     TEST("stem player defers a section change to the loop boundary");
 
@@ -1611,6 +1669,8 @@ int main() {
     testStemTagRouting();
     testStemRoutingPersists();
     testChainPresetRoundTrip();
+    testChainStoreNamesSurviveSanitising();
+    testLibraryOpensItsChainStore();
     testStemSectionLaunch();
     testStemImmediateLaunch();
     testStemSectionPersistence();

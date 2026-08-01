@@ -157,6 +157,99 @@ bool Application::initialise() {
         patcher_.tidyStemChains(player);
         markModified();
     };
+    inspector_.onStemTagged = [this](NodeId player, int slot, const std::string& tagId) {
+        // Tagging a stem is a statement about what it is, and the tag may know
+        // how that kind of stem gets treated. Offered rather than done: building
+        // a rack loads plugins and takes a moment, and a mistagged stem should
+        // not silently instantiate four of them over the one already there.
+        const library::Tag* tag = library_.palette().find(tagId);
+        if (!tag || tag->defaultChain.empty()) return;
+
+        library::ChainPreset preset;
+        if (!library_.chains().load(tag->defaultChain, preset) || preset.empty()) return;
+
+        const std::string message =
+            "\"" + tag->name + "\" comes with the chain \"" + tag->defaultChain + "\" ("
+            + std::to_string(preset.plugins.size()) + " plugins).\n\n"
+            "Put it on this stem? Anything already on the stem is replaced.";
+
+        if (!platform::confirmDialog(window_.handle(), "Apply the tag's chain", message)) return;
+
+        std::vector<std::string> missing;
+        const int placed = patcher_.applyStemChain(player, slot, preset, &missing);
+        markModified();
+        ui_.notify("loaded \"" + tag->defaultChain + "\"  ("
+                       + std::to_string(placed) + " plugins)",
+                   missing.empty() ? ui::theme().accent : ui::theme().warning, 3.0f);
+    };
+    inspector_.onSaveChain = [this](NodeId player, int slot, const std::string& name) {
+        if (!library_.chains().isOpen()) {
+            ui_.notify("no library open to save into", ui::theme().danger, 3.0f);
+            return;
+        }
+
+        const library::ChainPreset preset = patcher_.captureStemChain(player, slot, name);
+        if (preset.empty()) {
+            ui_.notify("nothing on that stem to save", ui::theme().danger, 3.0f);
+            return;
+        }
+
+        if (!library_.chains().save(preset)) {
+            ui_.notify("could not write that chain", ui::theme().danger, 4.0f);
+            return;
+        }
+
+        ui_.notify("saved \"" + name + "\"  ("
+                       + std::to_string(preset.plugins.size()) + " plugins)",
+                   ui::theme().accent, 2.5f);
+
+        // The moment a rack is judged good enough to name is the moment it is
+        // worth making it the default for its kind of stem - and it is the only
+        // moment the intent is unambiguous, so the offer is made here rather
+        // than given a control of its own somewhere in the tag editor.
+        auto* stems = dynamic_cast<StemPlayerNode*>(engine_.graph().node(player));
+        if (!stems) return;
+
+        const int tagIndex = library_.palette().indexOf(stems->stemTag(slot));
+        const library::Tag* tag = library_.palette().find(stems->stemTag(slot));
+        if (tagIndex < 0 || !tag || tag->defaultChain == name) return;
+
+        const std::string message =
+            "Make \"" + name + "\" the default chain for \"" + tag->name + "\"?\n\n"
+            + (tag->defaultChain.empty()
+                   ? "Stems tagged this way will offer to load it."
+                   : "It replaces \"" + tag->defaultChain + "\".");
+
+        if (!platform::confirmDialog(window_.handle(), "Set the tag's default chain", message))
+            return;
+
+        library_.palette().setDefaultChain(tagIndex, name);
+        library_.savePalette();
+    };
+    inspector_.onLoadChain = [this](NodeId player, int slot, const std::string& name) {
+        library::ChainPreset preset;
+        if (!library_.chains().load(name, preset)) {
+            ui_.notify("could not read \"" + name + "\"", ui::theme().danger, 4.0f);
+            return;
+        }
+
+        std::vector<std::string> missing;
+        const int placed = patcher_.applyStemChain(player, slot, preset, &missing);
+        markModified();
+
+        // A chain that came back short says which plugins it could not find. The
+        // alternative - a quietly shorter rack - is the kind of thing that gets
+        // discovered on stage.
+        if (missing.empty()) {
+            ui_.notify("loaded \"" + name + "\"  (" + std::to_string(placed) + " plugins)",
+                       ui::theme().accent, 2.5f);
+        } else {
+            std::string message = std::to_string(placed) + " loaded, missing: " + missing.front();
+            if (missing.size() > 1)
+                message += " and " + std::to_string(missing.size() - 1) + " more";
+            ui_.notify(message, ui::theme().warning, 5.0f);
+        }
+    };
 
     pluginView_.onAddPlugin = [this](const vst2::PluginDescription& description, bool forceBridge) {
         addPluginNode(description, forceBridge);

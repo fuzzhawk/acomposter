@@ -505,6 +505,61 @@ void InspectorView::drawStemChains(Ui& ui, Rect& area, Node& node) {
             }
         }
 
+        // -- saved chains --------------------------------------------------
+        // A rack is worth naming the moment it is right, and worth recalling on
+        // the next song rather than rebuilt. Save writes what is here now,
+        // including plugin state; load replaces what is here, because a preset
+        // that stacked itself on top of the existing rack would be a different
+        // sound every time it was applied.
+        if (library_ && library_->chains().isOpen() && area.height >= t.scaled(24.0f)) {
+            Rect presetRow = area.removeFromTop(t.scaled(20.0f));
+            presetRow.removeFromLeft(t.scaled(14.0f));
+
+            const bool saving = savingStem_ == slot;
+            const Rect saveArea = presetRow.removeFromRight(t.scaled(46.0f));
+
+            if (saving) {
+                // Confirm on the button, or on Enter in the field.
+                Rect fieldArea = presetRow;
+                const UiId field = ui.idFrom(&node, 1200 + slot);
+                const bool committed = ui.textField(field, fieldArea, chainNameBuffer_);
+
+                if (ui.button(ui.idFrom(&node, 1240 + slot), saveArea, "keep",
+                              Ui::ButtonStyle::Primary, false, !chainNameBuffer_.empty())
+                    || (committed && !chainNameBuffer_.empty())) {
+                    if (onSaveChain) onSaveChain(node.id(), slot, chainNameBuffer_);
+                    savingStem_ = -1;
+                    chainNameBuffer_.clear();
+                }
+            } else {
+                if (ui.button(ui.idFrom(&node, 1240 + slot), saveArea, "save",
+                              Ui::ButtonStyle::Normal, false, !chain.empty())) {
+                    savingStem_ = slot;
+                    // Seeded from the stem's tag, which is usually the right
+                    // name: a chain saved off the bass stem is the bass chain.
+                    const library::Tag* tag = library_->palette().find(tagId);
+                    chainNameBuffer_ = tag ? tag->name : stems->stemName(slot);
+                }
+                if (ui.isHot(ui.idFrom(&node, 1240 + slot)) && chain.empty())
+                    ui.setTooltip("Nothing on this stem to save");
+
+                presetRow.removeFromRight(t.scaled(4.0f));
+
+                const std::vector<std::string> names = library_->chains().names();
+                std::vector<std::string> items;
+                items.reserve(names.size() + 1);
+                items.push_back("load chain...");
+                for (const std::string& name : names) items.push_back(name);
+
+                int chosen = 0;
+                if (ui.combo(ui.idFrom(&node, 1280 + slot), presetRow, items, chosen)
+                    && chosen > 0) {
+                    if (onLoadChain)
+                        onLoadChain(node.id(), slot, items[static_cast<std::size_t>(chosen)]);
+                }
+            }
+        }
+
         for (NodeId inChain : chain) {
             if (area.height < 26.0f) break;
             const Node* effect = graph.node(inChain);

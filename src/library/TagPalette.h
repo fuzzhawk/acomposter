@@ -52,6 +52,8 @@ public:
     void rename(int index, std::string name);
     void setColour(int index, std::uint32_t colour);
     void setOutputSlot(int index, int slot);
+    // The saved chain a stem of this kind is offered when it is tagged.
+    void setDefaultChain(int index, std::string chainName);
     void move(int from, int to);
 
     // -- persistence -------------------------------------------------------
