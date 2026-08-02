@@ -63,12 +63,6 @@ private:
     std::string keyBuffer_;
     std::string bpmBuffer_;
     std::string bufferFor_;
-
-    // The line being edited, as "which text" and "which line" - notes and lyrics
-    // share the widget, so the field id has to distinguish them.
-    int editingSalt_ = -1;
-    int editingLine_ = -1;
-    std::string lineBuffer_;
 };
 
 } // namespace acm::ui

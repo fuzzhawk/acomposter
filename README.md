@@ -382,9 +382,16 @@ AIFF onto the canvas, or onto an existing player to replace its file.
 On the metasurface: drag a snapshot to move it, `Alt`-click to recall it exactly,
 right-click to delete it, double-click empty space to capture a new one there.
 
-On a stem player: right-click an output port to open that stem's rack in the
-inspector. `Shift`-click a tag in the stem browser to edit its name, output and
-colour.
+On a stem player: right-click an output port for that stem's rack - save the
+chain under a name, load a saved one, copy the rack to another stem, tidy them
+all, or open it in the inspector. `Shift`-drag along a stem's strip to mark the
+range to send to a build node. `Shift`-click a tag in the stem browser to edit
+its name, output and colour.
+
+The file browser is down the left of the patch, songs, projects and stems tabs -
+drag a file from it onto the canvas, onto a stem, onto a drop node's layer, or
+into a song. Notes and lyrics are multi-line: `Ctrl+Enter` or clicking away
+keeps them.
 
 ---
 

@@ -189,8 +189,14 @@ void Ui::popId() {
 void Ui::pushClip(const Rect& rect) { drawList_.pushClip(rect); }
 void Ui::popClip() { drawList_.popClip(); }
 
+void Ui::pushInert() { ++inert_; }
+void Ui::popInert() { if (inert_ > 0) --inert_; }
+
 bool Ui::hovering(const Rect& rect) const {
     if (!input_.windowFocused && active_ == kNoId) return false;
+
+    // Drawn under something else: visible, but not the thing being pointed at.
+    if (inert_ > 0) return false;
 
     // An open popup swallows hovering everywhere except inside itself.
     if (popupId_ != kNoId && !insidePopup_) return false;
@@ -246,26 +252,35 @@ bool Ui::buttonBehaviour(UiId control, const Rect& rect, bool& outHovered, bool&
 // Primitives
 // ---------------------------------------------------------------------------
 
+// Every primitive draws into the popup's list when it is called from inside
+// one, exactly as the widgets do. They did not, and a popup's panel is drawn
+// over the main list, so a label or a separator inside a menu went *behind* it
+// and was simply never seen. It had been that way long enough to look like a
+// design: the node palette's "add node" heading and every one of its group
+// names have been invisible since it was written.
 void Ui::panel(const Rect& rect, bool raised) {
     const Theme& t = theme();
-    drawList_.addRectFilled(rect, raised ? t.panelRaised : t.panel, t.cornerRadius);
-    drawList_.addRect(rect, t.border, t.borderWidth, t.cornerRadius);
+    DrawList& list = insidePopup_ ? overlayList_ : drawList_;
+    list.addRectFilled(rect, raised ? t.panelRaised : t.panel, t.cornerRadius);
+    list.addRect(rect, t.border, t.borderWidth, t.cornerRadius);
 }
 
 void Ui::separator(const Rect& rect, bool vertical) {
     const Theme& t = theme();
+    DrawList& list = insidePopup_ ? overlayList_ : drawList_;
     if (vertical) {
         const float x = std::floor(rect.centre().x);
-        drawList_.addRectFilled(Rect{ x, rect.top(), 1.0f, rect.height }, t.borderFaint);
+        list.addRectFilled(Rect{ x, rect.top(), 1.0f, rect.height }, t.borderFaint);
     } else {
         const float y = std::floor(rect.centre().y);
-        drawList_.addRectFilled(Rect{ rect.left(), y, rect.width, 1.0f }, t.borderFaint);
+        list.addRectFilled(Rect{ rect.left(), y, rect.width, 1.0f }, t.borderFaint);
     }
 }
 
 void Ui::label(const Rect& rect, std::string_view text, const Colour& colour,
                gfx::FontId fontId, DrawList::Align align) {
-    drawList_.addTextClipped(font(fontId), rect, colour, text, align);
+    DrawList& list = insidePopup_ ? overlayList_ : drawList_;
+    list.addTextClipped(font(fontId), rect, colour, text, align);
 }
 
 void Ui::labelDim(const Rect& rect, std::string_view text, DrawList::Align align) {
@@ -1019,8 +1034,236 @@ bool Ui::textField(UiId control, const Rect& rect, std::string& text,
     return committed;
 }
 
+// Folds `text` into lines that fit `maxWidth`, breaking at spaces where it can
+// and mid-word where it cannot, and always breaking on a newline the author
+// typed. Returned spans cover the whole buffer with no gaps, so a caret offset
+// always lands on exactly one line - including the empty line after a trailing
+// newline, which is where the caret sits after pressing Enter and is the one
+// case a naive splitter drops.
+std::vector<Ui::WrappedLine> Ui::wrapForWidth(const gfx::Font& f, std::string_view text,
+                                              float maxWidth) {
+    std::vector<Ui::WrappedLine> lines;
+    if (maxWidth <= 1.0f) {
+        lines.push_back({ 0, text.size(), true });
+        return lines;
+    }
+
+    std::size_t lineStart = 0;
+    while (lineStart <= text.size()) {
+        // The paragraph this line belongs to ends at the next newline.
+        const std::size_t hardEnd = std::min(text.find('\n', lineStart), text.size());
+
+        if (f.textWidth(text.substr(lineStart, hardEnd - lineStart)) <= maxWidth) {
+            lines.push_back({ lineStart, hardEnd, hardEnd < text.size() });
+            if (hardEnd >= text.size()) break;
+            lineStart = hardEnd + 1;
+            // A newline at the very end leaves an empty last line, which the
+            // caret can legitimately be on.
+            if (lineStart == text.size()) {
+                lines.push_back({ lineStart, lineStart, true });
+                break;
+            }
+            continue;
+        }
+
+        // Too wide: take as much as fits, then walk back to a space.
+        std::size_t fits = lineStart + f.offsetForX(text.substr(lineStart, hardEnd - lineStart),
+                                                    maxWidth);
+        if (fits <= lineStart) fits = utf8NextOffset(text, lineStart);
+
+        std::size_t breakAt = fits;
+        for (std::size_t at = fits; at > lineStart; --at) {
+            if (text[at - 1] == ' ') { breakAt = at; break; }
+        }
+        // One unbroken word longer than the box: break it rather than
+        // overflow, because the alternative is text nobody can read.
+        if (breakAt <= lineStart) breakAt = fits;
+
+        lines.push_back({ lineStart, breakAt, false });
+        lineStart = breakAt;
+    }
+
+    if (lines.empty()) lines.push_back({ 0, 0, true });
+    return lines;
+}
+
+bool Ui::textArea(UiId control, const Rect& rect, std::string& text,
+                  std::string_view placeholder) {
+    const Theme& t = theme();
+    DrawList& list = insidePopup_ ? overlayList_ : drawList_;
+    const gfx::Font& f = font(t.fontUi);
+
+    const bool over = hovering(rect);
+    const bool editing = editing_ == control;
+
+    if (over) {
+        setCursor(Cursor::Text);
+        if (active_ == kNoId) hotNext_ = control;
+    }
+
+    Rect inner = rect.deflated(t.smallPadding);
+    const std::string& displayed = editing ? textEdit_.buffer : text;
+    std::vector<WrappedLine> lines = wrapForWidth(f, displayed, inner.width);
+
+    const float lineHeight = f.lineHeight;
+    const float contentHeight = static_cast<float>(lines.size()) * lineHeight;
+
+    // Maps a point to a caret offset. Used by the click and by the drag that
+    // extends a selection, which must agree or the selection jumps.
+    const auto offsetAt = [&](Vec2 point) -> std::size_t {
+        if (lines.empty()) return 0;
+        const float local = point.y - inner.top() + textEdit_.scrollY;
+        auto index = static_cast<long long>(local / std::max(1.0f, lineHeight));
+        index = clampValue(index, 0LL, static_cast<long long>(lines.size()) - 1);
+        const WrappedLine& line = lines[static_cast<std::size_t>(index)];
+        const std::string_view span(displayed.data() + line.begin, line.end - line.begin);
+        return line.begin + f.offsetForX(span, point.x - inner.left());
+    };
+
+    bool committed = false;
+
+    if (over && input_.mousePressed[static_cast<int>(MouseButton::Left)]) {
+        if (!editing) {
+            beginTextEdit(control, text, false);
+            textEdit_.scrollY = 0.0f;
+            lines = wrapForWidth(f, textEdit_.buffer, inner.width);
+        }
+        textEdit_.cursor = offsetAt(input_.mousePosition);
+        if (!input_.shift) textEdit_.selectionAnchor = textEdit_.cursor;
+        active_ = control;
+        input_.mousePressed[static_cast<int>(MouseButton::Left)] = false;
+    } else if (!over && input_.mousePressed[static_cast<int>(MouseButton::Left)] && editing) {
+        // Leaving is the commit, because Enter is a newline in here.
+        text = textEdit_.buffer;
+        cancelTextEdit();
+        return true;
+    }
+
+    if (editing && active_ == control && input_.mouseDown[static_cast<int>(MouseButton::Left)])
+        textEdit_.cursor = offsetAt(input_.mousePosition);
+
+    if (editing) {
+        applyTextEditKeys(f, &lines);
+        // The buffer has almost certainly changed, so everything measured from
+        // it is remeasured before it is used to place a caret.
+        lines = wrapForWidth(f, textEdit_.buffer, inner.width);
+
+        if (input_.ctrl && input_.keyPressed(key::Enter)) {
+            text = textEdit_.buffer;
+            cancelTextEdit();
+            committed = true;
+        } else {
+            // Follow the caret. Its line is found the same way Up and Down
+            // find it, so the three cannot disagree about where it is.
+            std::size_t caretLine = 0;
+            for (std::size_t i = 0; i < lines.size(); ++i)
+                if (textEdit_.cursor <= lines[i].end) { caretLine = i; break; }
+
+            const float caretTop = static_cast<float>(caretLine) * lineHeight;
+            if (caretTop < textEdit_.scrollY) textEdit_.scrollY = caretTop;
+            if (caretTop + lineHeight > textEdit_.scrollY + inner.height)
+                textEdit_.scrollY = caretTop + lineHeight - inner.height;
+        }
+    }
+
+    // The wheel scrolls it whether or not it is being edited, so a long note
+    // can be read without being opened for editing.
+    if (over && input_.wheel != 0.0f && contentHeight > inner.height) {
+        textEdit_.scrollY -= input_.wheel * lineHeight * 3.0f;
+        input_.wheel = 0.0f;
+    }
+    textEdit_.scrollY = clampValue(textEdit_.scrollY, 0.0f,
+                                   std::max(0.0f, contentHeight - inner.height));
+    const float scrollY = editing ? textEdit_.scrollY : 0.0f;
+
+    // -- drawing -----------------------------------------------------------
+    list.addRectFilled(rect, editing ? t.panelSunken : t.widgetBackground, t.cornerRadius);
+    list.addRect(rect, editing ? t.accent.withAlpha(0.8f) : (over ? t.borderStrong : t.border),
+                 t.borderWidth, t.cornerRadius);
+
+    list.pushClip(inner);
+
+    if (displayed.empty() && !placeholder.empty() && !editing) {
+        list.addText(f, { inner.left(), inner.top() }, t.textFaint, placeholder);
+    } else {
+        const std::size_t from = std::min(textEdit_.cursor, textEdit_.selectionAnchor);
+        const std::size_t to = std::max(textEdit_.cursor, textEdit_.selectionAnchor);
+
+        for (std::size_t i = 0; i < lines.size(); ++i) {
+            const float y = inner.top() + static_cast<float>(i) * lineHeight - scrollY;
+            if (y + lineHeight < inner.top() || y > inner.bottom()) continue;
+
+            const WrappedLine& line = lines[i];
+            const std::string_view span(displayed.data() + line.begin, line.end - line.begin);
+
+            if (editing && textEdit_.hasSelection() && to > line.begin && from < line.end) {
+                const std::size_t a = std::max(from, line.begin) - line.begin;
+                const std::size_t b = std::min(to, line.end) - line.begin;
+                const float x0 = inner.left() + f.textWidth(span.substr(0, a));
+                const float x1 = inner.left() + f.textWidth(span.substr(0, b));
+                list.addRectFilled(Rect{ x0, y, std::max(2.0f, x1 - x0), lineHeight },
+                                   t.accent.withAlpha(0.25f));
+            }
+
+            list.addText(f, { inner.left(), y }, t.text, span);
+
+            if (editing && textEdit_.cursor >= line.begin && textEdit_.cursor <= line.end) {
+                // One line owns the caret: the first whose end reaches it.
+                const bool ownsIt = i == 0 || textEdit_.cursor > lines[i - 1].end;
+                static float blink = 0.0f;
+                if (i == 0) blink += deltaSeconds_;
+                if (ownsIt && std::fmod(blink, 1.06f) < 0.62f) {
+                    const float caretX = inner.left()
+                        + f.textWidth(span.substr(0, textEdit_.cursor - line.begin));
+                    list.addRectFilled(Rect{ caretX, y, 1.5f, lineHeight }, t.accent);
+                }
+            }
+        }
+    }
+
+    list.popClip();
+
+    // A hint that there is more, when there is.
+    if (contentHeight > inner.height) {
+        const float visible = inner.height / contentHeight;
+        const float barHeight = std::max(t.scaled(14.0f), inner.height * visible);
+        const float travel = inner.height - barHeight;
+        const float at = contentHeight - inner.height <= 0.0f
+                       ? 0.0f : scrollY / (contentHeight - inner.height);
+        list.addRectFilled(Rect{ rect.right() - t.scaled(3.0f), inner.top() + travel * at,
+                                 t.scaled(2.0f), barHeight },
+                           t.border, 1.0f);
+    }
+
+    return committed;
+}
+
 void Ui::updateTextEdit(const Rect& rect, const gfx::Font& f) {
     const Theme& t = theme();
+    applyTextEditKeys(f, nullptr);
+
+    // Keep the caret in view.
+    const Rect inner = rect.deflated(t.smallPadding);
+    const float caretX = f.textWidth(std::string_view(textEdit_.buffer).substr(0, textEdit_.cursor));
+    if (caretX - textEdit_.scrollX > inner.width - 4.0f)
+        textEdit_.scrollX = caretX - inner.width + 4.0f;
+    if (caretX - textEdit_.scrollX < 0.0f)
+        textEdit_.scrollX = caretX;
+    textEdit_.scrollX = std::max(0.0f, textEdit_.scrollX);
+}
+
+void Ui::applyTextEditKeys(const gfx::Font& f, const std::vector<WrappedLine>* lines) {
+    const bool multiline = lines != nullptr;
+
+    // Which wrapped line the caret sits on, and how far across it. Both are
+    // needed by Up, Down, Home and End, and all four are wrong if they work on
+    // the raw buffer instead of what is on screen.
+    const auto lineAt = [&](std::size_t offset) -> std::size_t {
+        if (!lines || lines->empty()) return 0;
+        for (std::size_t i = 0; i < lines->size(); ++i)
+            if (offset <= (*lines)[i].end) return i;
+        return lines->size() - 1;
+    };
 
     for (std::uint32_t codepoint : input_.textInput) {
         if (codepoint < 0x20 || codepoint == 0x7F) continue;
@@ -1062,13 +1305,51 @@ void Ui::updateTextEdit(const Rect& rect, const gfx::Font& f) {
                 break;
 
             case key::Home:
-                textEdit_.cursor = 0;
+                // The start of the visual line, not of the document. Ctrl+Home
+                // is the document, which is the convention everywhere.
+                textEdit_.cursor = multiline && !input_.ctrl
+                                 ? (*lines)[lineAt(textEdit_.cursor)].begin : 0;
                 if (!input_.shift) textEdit_.clearSelection();
                 break;
 
             case key::End:
-                textEdit_.cursor = textEdit_.buffer.size();
+                textEdit_.cursor = multiline && !input_.ctrl
+                                 ? (*lines)[lineAt(textEdit_.cursor)].end
+                                 : textEdit_.buffer.size();
                 if (!input_.shift) textEdit_.clearSelection();
+                break;
+
+            case key::Up:
+            case key::Down: {
+                if (!multiline) break;
+                const std::size_t line = lineAt(textEdit_.cursor);
+                const bool up = event.code == key::Up;
+                if (up && line == 0) { textEdit_.cursor = 0; }
+                else if (!up && line + 1 >= lines->size()) {
+                    textEdit_.cursor = textEdit_.buffer.size();
+                } else {
+                    // Keep the caret at the same x, which is what makes a
+                    // column of text navigable rather than a queue of
+                    // characters.
+                    const WrappedLine& from = (*lines)[line];
+                    const WrappedLine& to = (*lines)[up ? line - 1 : line + 1];
+                    const float x = f.textWidth(std::string_view(textEdit_.buffer)
+                                                    .substr(from.begin, textEdit_.cursor - from.begin));
+                    const std::string_view target(textEdit_.buffer.data() + to.begin,
+                                                  to.end - to.begin);
+                    textEdit_.cursor = to.begin + f.offsetForX(target, x);
+                }
+                if (!input_.shift) textEdit_.clearSelection();
+                break;
+            }
+
+            case key::Enter:
+                // Handled by the field as a commit; here it is a newline. The
+                // commit is Ctrl+Enter, and leaving the field.
+                if (multiline && !input_.ctrl) {
+                    if (textEdit_.hasSelection()) deleteSelection();
+                    insertText("\n");
+                }
                 break;
 
             case key::A:
@@ -1083,14 +1364,6 @@ void Ui::updateTextEdit(const Rect& rect, const gfx::Font& f) {
         }
     }
 
-    // Keep the caret in view.
-    const Rect inner = rect.deflated(t.smallPadding);
-    const float caretX = f.textWidth(std::string_view(textEdit_.buffer).substr(0, textEdit_.cursor));
-    if (caretX - textEdit_.scrollX > inner.width - 4.0f)
-        textEdit_.scrollX = caretX - inner.width + 4.0f;
-    if (caretX - textEdit_.scrollX < 0.0f)
-        textEdit_.scrollX = caretX;
-    textEdit_.scrollX = std::max(0.0f, textEdit_.scrollX);
 }
 
 // ---------------------------------------------------------------------------

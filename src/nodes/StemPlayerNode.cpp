@@ -220,6 +220,14 @@ std::shared_ptr<SampleBuffer> StemPlayerNode::extractSnippet(int beatsPerBar) co
         std::copy(from, from + frames, to);
     }
 
+    // Samples alone are not enough to draw with. Everything else in the
+    // application gets its overview from the loader, so a buffer built by hand
+    // here arrived with an empty one and the build node drew a labelled, sized,
+    // completely blank box - which reads as a snippet that failed to transfer
+    // rather than one that transferred and cannot be seen.
+    out->buildOverview();
+    out->computePeak();
+
     return out;
 }
 

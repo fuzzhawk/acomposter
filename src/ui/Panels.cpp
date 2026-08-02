@@ -1051,10 +1051,12 @@ void InspectorView::render(Ui& ui, const Rect& bounds, NodeId nodeId) {
     drawDropSection(ui, area, *node);
 
     // -- comment -----------------------------------------------------------
+    // Several lines, because the useful note on a node is "the send is
+    // deliberately pre-fader, do not 'fix' it" rather than one word.
     ui.separator(area.removeFromTop(t.scaled(9.0f)));
-    Rect commentRow = area.removeFromTop(t.scaled(22.0f));
+    Rect commentRow = area.removeFromTop(t.scaled(56.0f));
     if (commentBufferFor_ != nodeId) { commentBuffer_ = node->comment; commentBufferFor_ = nodeId; }
-    if (ui.textField(ui.id("inspector.comment"), commentRow, commentBuffer_, "note"))
+    if (ui.textArea(ui.id("inspector.comment"), commentRow, commentBuffer_, "note"))
         node->comment = commentBuffer_;
 
     area.removeFromTop(t.scaled(6.0f));

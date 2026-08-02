@@ -63,6 +63,14 @@ private:
     // works in a different coordinate space to the one on screen.
     gfx::Rect canvasBounds() const;
 
+    // Draws the file browser down the left of `area` and returns what is left
+    // for the tab itself. Shared rather than duplicated because the browser is
+    // the same panel wherever it appears, and because the tabs that want it
+    // want it for the same reason: a file is dragged *from* here into whatever
+    // the tab is showing, and a browser that only exists on one tab means
+    // switching tabs mid-drag, which is not a thing anyone can do.
+    gfx::Rect layoutBrowser(gfx::Rect area);
+
     // -- patch management --------------------------------------------------
     void newPatch();
     void openPatch();

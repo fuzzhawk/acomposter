@@ -143,6 +143,14 @@ bool Application::initialise() {
         markModified();
     };
 
+    // The canvas's port menu does the same three things the inspector does, so
+    // it is given the same handlers rather than a second implementation of
+    // them. Assigned after the inspector's, which is where they are defined.
+    patcher_.chainNames = [this] {
+        return library_.chains().isOpen() ? library_.chains().names()
+                                          : std::vector<std::string>{};
+    };
+
     inspector_.onOpenPluginEditor = [this](NodeId node) { togglePluginEditor(node); };
     inspector_.onAddStemEffect = [this](NodeId player, int slot) {
         beginStemEffectPick(player, slot);
@@ -181,6 +189,16 @@ bool Application::initialise() {
         markModified();
         ui_.notify("snippet sent to " + build->name(), ui::theme().accent, 2.5f);
     };
+    patcher_.onSaveChain = [this](NodeId player, int slot, const std::string& name) {
+        if (inspector_.onSaveChain) inspector_.onSaveChain(player, slot, name);
+    };
+    patcher_.onLoadChain = [this](NodeId player, int slot, const std::string& name) {
+        if (inspector_.onLoadChain) inspector_.onLoadChain(player, slot, name);
+    };
+    patcher_.onCopyChain = [this](NodeId player, int from, int to) {
+        if (inspector_.onCopyChain) inspector_.onCopyChain(player, from, to);
+    };
+
     inspector_.onTidyChains = [this](NodeId player) {
         patcher_.tidyStemChains(player);
         markModified();
@@ -643,6 +661,25 @@ void Application::reconcileColourExclusions() {
     }
 }
 
+gfx::Rect Application::layoutBrowser(gfx::Rect area) {
+    if (!showBrowser_) return area;
+
+    const Rect browserArea = area.removeFromLeft(browserWidthPx());
+    browser_.render(ui_, browserArea);
+
+    // Draggable splitter between the browser and whatever it sits beside.
+    const Rect splitter{ area.left() - 2.0f, area.top(), 5.0f, area.height };
+    bool hovered = false, held = false;
+    ui_.buttonBehaviour(ui_.id("split.browser"), splitter, hovered, held);
+    if (hovered || held) ui_.setCursor(ui::Cursor::ResizeHorizontal);
+    if (ui_.isActive(ui_.id("split.browser"))) {
+        browserWidth_ = clampValue(
+            browserWidth_ + input_.mouseDelta.x / ui::theme().scale, 160.0f, 480.0f);
+    }
+
+    return area;
+}
+
 float Application::browserWidthPx() const { return ui::theme().scaled(browserWidth_); }
 float Application::inspectorWidthPx() const { return ui::theme().scaled(inspectorWidth_); }
 float Application::timelineHeightPx() const { return ui::theme().scaled(timelineHeight_); }
@@ -689,19 +726,7 @@ void Application::layout(float deltaSeconds) {
                 drawTimelinePlaceholder(timelineArea);
             }
 
-            if (showBrowser_) {
-                const Rect browserArea = area.removeFromLeft(browserWidthPx());
-                browser_.render(ui_, browserArea);
-
-                // Draggable splitter between the browser and the canvas.
-                const Rect splitter{ area.left() - 2.0f, area.top(), 5.0f, area.height };
-                bool hovered = false, held = false;
-                ui_.buttonBehaviour(ui_.id("split.browser"), splitter, hovered, held);
-                if (hovered || held) ui_.setCursor(ui::Cursor::ResizeHorizontal);
-                if (ui_.isActive(ui_.id("split.browser")))
-                    browserWidth_ = clampValue(
-                        browserWidth_ + input_.mouseDelta.x / t.scale, 160.0f, 480.0f);
-            }
+            area = layoutBrowser(area);
 
             if (showInspector_) {
                 const Rect inspectorArea = area.removeFromRight(inspectorWidthPx());
@@ -731,16 +756,20 @@ void Application::layout(float deltaSeconds) {
             controlView_.render(ui_, full);
             break;
 
+        // Each of these takes the browser too. Songs and projects reference
+        // audio by path and accept a dragged file directly; the stem browser is
+        // where a folder is turned into a set, and having to leave it to go
+        // and find one more file was the whole complaint.
         case ui::MainView::Stems:
-            stemBrowser_.render(ui_, full);
+            stemBrowser_.render(ui_, layoutBrowser(full));
             break;
 
         case ui::MainView::Projects:
-            projectsView_.render(ui_, full);
+            projectsView_.render(ui_, layoutBrowser(full));
             break;
 
         case ui::MainView::Songs:
-            songsView_.render(ui_, full);
+            songsView_.render(ui_, layoutBrowser(full));
             break;
 
         case ui::MainView::Library:

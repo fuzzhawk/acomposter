@@ -1140,6 +1140,13 @@ void testStemSnippetExtraction() {
     // The audio really is the requested range, not the start of the file.
     CHECK_CLOSE(matched->channel(0)[0], 1.0 / 8.0, 1e-4);
 
+    // And it arrives drawable. Everything else gets its overview from the
+    // loader; a buffer built by hand here has to build its own, or the build
+    // node draws a labelled, correctly sized, entirely empty box.
+    CHECK(!matched->overview().minimum.empty());
+    CHECK(matched->overview().minimum.size() == matched->overview().maximum.size());
+    CHECK(matched->peakLevel() > 0.0f);
+
     // Free-form takes the drag exactly.
     snip.tempoMatched = false;
     stems.setSnippet(snip);

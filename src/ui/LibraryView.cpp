@@ -11,28 +11,6 @@ namespace {
 float listWidth() { return theme().scaled(240.0f); }
 float rowHeight() { return theme().scaled(22.0f); }
 
-// Splits a stored block of text into the lines the editor works on. A trailing
-// newline does not become an empty line, because nobody typed it.
-std::vector<std::string> splitLines(const std::string& text) {
-    std::vector<std::string> lines;
-    std::string current;
-    for (const char c : text) {
-        if (c == '\n') { lines.push_back(current); current.clear(); }
-        else if (c != '\r') { current.push_back(c); }
-    }
-    if (!current.empty()) lines.push_back(current);
-    return lines;
-}
-
-std::string joinLines(const std::vector<std::string>& lines) {
-    std::string out;
-    for (std::size_t i = 0; i < lines.size(); ++i) {
-        if (i > 0) out.push_back('\n');
-        out += lines[i];
-    }
-    return out;
-}
-
 Colour tagColour(const library::Tag& tag) {
     return Colour{ static_cast<float>((tag.colour >> 16) & 0xFF) / 255.0f,
                    static_cast<float>((tag.colour >> 8) & 0xFF) / 255.0f,
@@ -104,7 +82,6 @@ void LibraryView::drawList(Ui& ui, const Rect& area) {
         if (ui.buttonBehaviour(ui.id("library.row." + entry->id), row, hovered, held)) {
             selected_ = entry->id;
             bufferFor_.clear();
-            editingLine_ = -1;
         }
 
         if (isSelected) list.addRectFilled(row, t.selection.withAlpha(0.20f), 2.0f);
@@ -382,96 +359,26 @@ void LibraryView::drawLines(Ui& ui, Rect& area, library::Entry& entry, std::stri
     ui.separator(area.removeFromTop(t.scaled(9.0f)));
     Rect header = area.removeFromTop(t.scaled(20.0f));
     ui.label(header.removeFromLeft(t.scaled(70.0f)), caption, t.textDim, t.fontUiBold);
-
-    std::vector<std::string> lines = splitLines(text);
-    const UiId fieldId = ui.id(std::string(caption) + ".edit");
-
-    // A line being typed for the first time is held here rather than written
-    // into the entry empty and edited in place. Storing it first does not work:
-    // the text is a block joined by newlines, an empty last line leaves no
-    // trace in it, and the row being edited would vanish between frames.
-    const int newLineIndex = static_cast<int>(lines.size());
-
-    if (ui.iconButton(ui.id(std::string(caption) + ".add"),
-                      header.removeFromRight(t.scaled(20.0f)), Ui::Icon::Plus, t.accent)) {
-        editingSalt_ = salt;
-        editingLine_ = newLineIndex;
-        lineBuffer_.clear();
-        // Focus has to be given explicitly: a text field only starts editing
-        // when it is clicked, and this one is about to appear under no pointer
-        // at all.
-        ui.beginTextEdit(fieldId, lineBuffer_, false);
-    }
+    ui.label(header, "click to edit  -  ctrl+enter or click away to keep",
+             t.textFaint, t.fontSmall, DrawList::Align::Right);
 
     area.removeFromTop(t.scaled(3.0f));
 
-    if (lines.empty() && !(editingSalt_ == salt && editingLine_ == newLineIndex)) {
-        ui.labelDim(area.removeFromTop(t.scaled(18.0f)), "empty");
-        return;
-    }
+    // Lyrics get more room than notes, because a verse is longer than a
+    // reminder and the two are read differently: notes are glanced at, lyrics
+    // are followed while something is playing.
+    const float rows = salt == 0 ? 6.0f : 14.0f;
 
-    const auto commit = [&](std::vector<std::string>& edited) {
-        text = joinLines(edited);
+    // The id is built from the entry's own id rather than its address, so
+    // selecting a different song abandons a half-typed edit instead of
+    // committing it into whatever is now on screen.
+    const UiId fieldId = ui.id(entry.id + "." + caption + ".area");
+
+    Rect box = area.removeFromTop(t.scaled(rows * 15.0f + 8.0f));
+    if (ui.textArea(fieldId, box, text,
+                    salt == 0 ? "anything worth remembering about this one"
+                              : "one line per line, as it is sung"))
         library_->save(entry.id);
-        editingLine_ = -1;
-    };
-
-    for (std::size_t i = 0; i < lines.size(); ++i) {
-        if (area.height < t.scaled(22.0f)) break;
-
-        const int index = static_cast<int>(i);
-        Rect row = area.removeFromTop(t.scaled(19.0f));
-
-        const bool editing = editingSalt_ == salt && editingLine_ == index;
-
-        const Rect removeArea = row.removeFromRight(t.scaled(18.0f));
-        if (ui.iconButton(ui.id(std::string(caption) + ".del." + std::to_string(i)),
-                          removeArea, Ui::Icon::Minus, t.textFaint)) {
-            lines.erase(lines.begin() + static_cast<long>(i));
-            commit(lines);
-            return;
-        }
-
-        if (editing) {
-            if (ui.textField(fieldId, row, lineBuffer_)) {
-                lines[i] = lineBuffer_;
-                commit(lines);
-            }
-            continue;
-        }
-
-        bool hovered = false, held = false;
-        if (ui.buttonBehaviour(ui.id(std::string(caption) + ".line." + std::to_string(i)),
-                               row, hovered, held)) {
-            editingSalt_ = salt;
-            editingLine_ = index;
-            lineBuffer_ = lines[i];
-            ui.beginTextEdit(fieldId, lineBuffer_, true);
-        }
-        if (hovered) ui.draw().addRectFilled(row, t.widgetHover, 2.0f);
-
-        ui.draw().addTextClipped(ui.font(t.fontSmall), row.deflated(t.scaled(3.0f)),
-                                 lines[i].empty() ? t.textFaint : t.textDim,
-                                 lines[i].empty() ? "(blank)" : lines[i]);
-    }
-
-    // The line being added, drawn after the ones that exist.
-    if (editingSalt_ == salt && editingLine_ == newLineIndex
-        && area.height >= t.scaled(22.0f)) {
-        Rect row = area.removeFromTop(t.scaled(19.0f));
-        row.removeFromRight(t.scaled(18.0f));
-
-        if (ui.textField(fieldId, row, lineBuffer_)) {
-            // An empty line committed is a line nobody wanted, so it is dropped
-            // rather than stored as a blank row to be tidied up later.
-            if (!lineBuffer_.empty()) {
-                lines.push_back(lineBuffer_);
-                commit(lines);
-            } else {
-                editingLine_ = -1;
-            }
-        }
-    }
 }
 
 void LibraryView::drawDetail(Ui& ui, const Rect& area) {

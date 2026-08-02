@@ -12,6 +12,7 @@
 #include "../meta/Metasurface.h"
 #include "Ui.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -113,9 +114,20 @@ public:
     // Set when a node's editor button is clicked; the application acts on it.
     NodeId consumeEditorRequest();
 
-    // Set when a stem player's output port is right-clicked. The chain presets
-    // for that stem live in the inspector, so the gesture opens that rack there
-    // rather than growing a second copy of the same controls on the canvas.
+    // -- the menu on a stem player's output port ---------------------------
+    // Right-clicking an output is the natural place to ask for the rack hanging
+    // off it, so that is where saving, loading and copying a chain live. The
+    // canvas does not perform them: saving needs the library and loading needs
+    // the plugin scan, and neither belongs to a view that draws nodes. It
+    // gathers the intent and hands it over.
+    std::function<void(NodeId player, int slot, const std::string& name)> onSaveChain;
+    std::function<void(NodeId player, int slot, const std::string& name)> onLoadChain;
+    std::function<void(NodeId player, int from, int to)> onCopyChain;
+    // The names the load list offers. A callback rather than a library pointer
+    // so the canvas keeps knowing nothing about where presets are kept.
+    std::function<std::vector<std::string>()> chainNames;
+
+    // Set when the menu's "open in the inspector" is chosen.
     struct RackRequest {
         NodeId node = kInvalidNode;
         int slot = -1;
@@ -165,11 +177,15 @@ private:
     Vec2 portPosition(const Node& node, PortIndex port, bool isInput, const Rect& viewBounds) const;
     PortHit hitTestPorts(Ui& ui, const Rect& viewBounds) const;
     NodeId hitTestNodes(Ui& ui, const Rect& viewBounds) const;
+    // The node on top at a point, in draw order.
+    NodeId topmostNodeAt(Vec2 pointer, const Rect& viewBounds) const;
     ConnectionId hitTestCables(Ui& ui, const Rect& viewBounds) const;
 
     void drawGrid(Ui& ui, const Rect& bounds) const;
     void drawCables(Ui& ui, const Rect& bounds);
-    void drawNode(Ui& ui, Node& node, const Rect& bounds);
+    // `interactive` is false for a node drawn underneath another at the
+    // pointer: it draws the same and claims nothing.
+    void drawNode(Ui& ui, Node& node, const Rect& bounds, bool interactive);
     void drawNodeBody(Ui& ui, Node& node, const Rect& body);
     void drawSamplePlayerBody(Ui& ui, Node& node, const Rect& body);
     void drawStemPlayerBody(Ui& ui, Node& node, const Rect& body);
@@ -210,8 +226,19 @@ private:
     NodeId resizingNode_ = kInvalidNode;
     float resizeStartWidth_ = 0.0f;
 
+    void handlePortMenu(Ui& ui, const Rect& bounds);
+
     NodeId editorRequest_ = kInvalidNode;
     RackRequest rackRequest_;
+
+    // Which output the port menu was opened on, and the two pieces of state it
+    // needs while it is up: a name being typed, and a rack armed for copying.
+    NodeId portMenuNode_ = kInvalidNode;
+    int portMenuSlot_ = -1;
+    bool savingChain_ = false;
+    std::string chainNameBuffer_;
+    NodeId copySourceNode_ = kInvalidNode;
+    int copySourceSlot_ = -1;
     NodeId renamingNode_ = kInvalidNode;
     std::string renameBuffer_;
 

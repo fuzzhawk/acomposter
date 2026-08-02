@@ -35,6 +35,41 @@ constexpr float kPortRadius = 5.0f;
 constexpr float kCableThickness = 2.0f;
 constexpr float kNodeMinWidth = 168.0f;
 
+// The vertical layout of a stem player's body, in design units.
+//
+// Named here because two places need it and they are nowhere near each other:
+// drawStemPlayerBody, which lays the rows out, and handleFileDrop, which has to
+// work out which stem strip a dropped file landed on. They were separate
+// arithmetic and they drifted - the tempo row grew from 18 to 20 and the strips
+// from 17 to 23 - so by the time it was noticed, dropping a file on the sixth
+// stem loaded the fourth. The error is in design units and multiplied by the
+// view scale, which is why it looked like a zoom bug: at 2.5x it was more than
+// two strips.
+namespace stemBody {
+constexpr float kSections = 76.0f;
+constexpr float kAfterSections = 4.0f;
+constexpr float kControlRow = 18.0f;
+constexpr float kAfterControls = 3.0f;
+constexpr float kTempoRow = 20.0f;
+constexpr float kAfterTempo = 4.0f;
+constexpr float kStripHeight = 23.0f;
+
+// From the top of the body to the top of the first strip.
+constexpr float stripsOffset() {
+    return kSections + kAfterSections + kControlRow + kAfterControls
+         + kTempoRow + kAfterTempo;
+}
+} // namespace stemBody
+
+// The drop node's vertical layout, for the same reason as above: the file drop
+// has to know which of the three layers it landed on.
+namespace dropBody {
+constexpr float kFireRow = 30.0f;
+constexpr float kAfterFire = 5.0f;
+constexpr float kLayerHeight = 40.0f;
+constexpr float layersOffset() { return kFireRow + kAfterFire; }
+} // namespace dropBody
+
 // How far a cable's control points reach horizontally. Proportional to the
 // span, so short hops stay tight and long runs sweep.
 float cableTension(Vec2 from, Vec2 to) {
@@ -230,6 +265,23 @@ NodeId PatcherView::hitTestNodes(Ui& ui, const Rect& viewBounds) const {
     for (std::size_t i = nodes.size(); i-- > 0;) {
         if (nodeBounds(*nodes[i], viewBounds).contains(pointer))
             return nodes[i]->id();
+    }
+    return kInvalidNode;
+}
+
+// The node the pointer is over, in the order they are drawn: selected nodes are
+// drawn last and so sit on top of unselected ones whatever the graph order.
+NodeId PatcherView::topmostNodeAt(Vec2 pointer, const Rect& viewBounds) const {
+    if (!engine_) return kInvalidNode;
+    const auto& nodes = engine_->graph().nodes();
+
+    for (std::size_t i = nodes.size(); i-- > 0;) {
+        if (!isSelected(nodes[i]->id())) continue;
+        if (nodeBounds(*nodes[i], viewBounds).contains(pointer)) return nodes[i]->id();
+    }
+    for (std::size_t i = nodes.size(); i-- > 0;) {
+        if (isSelected(nodes[i]->id())) continue;
+        if (nodeBounds(*nodes[i], viewBounds).contains(pointer)) return nodes[i]->id();
     }
     return kInvalidNode;
 }
@@ -690,28 +742,59 @@ bool PatcherView::handleFileDrop(const std::string& utf8Path, Vec2 screenPositio
     // empty canvas makes a new one. Both are what people try first.
     const Vec2 world = screenToWorld(screenPosition, bounds);
 
-    for (const auto& node : engine_->graph().nodes()) {
+    // Whichever node is on top there, by the same rule the pointer uses.
+    //
+    // This used to be several races instead of one decision. Each node body
+    // called acceptDrop for its own strip while it drew, and acceptDrop tests a
+    // bare rectangle - no clip stack, no z-order - so the *first node drawn*
+    // whose rectangle covered the pointer won, even when another node was drawn
+    // over it and was the only one visible there.
+    const NodeId target = topmostNodeAt(screenPosition, bounds);
+    if (Node* node = target != kInvalidNode ? engine_->graph().node(target) : nullptr) {
         const Rect box = nodeBounds(*node, bounds);
-        if (!box.contains(screenPosition)) continue;
 
         if (node->typeName() == "sample.player") {
-            auto* player = static_cast<SamplePlayerNode*>(node.get());
+            auto* player = static_cast<SamplePlayerNode*>(node);
             return player->loadFile(utf8Path, nullptr);
+        }
+
+        // Which of the three layers, from where in the node it landed. Above
+        // them - on the fire button - fills the first empty one, which is what
+        // three drags in a row should do.
+        if (node->typeName() == "drop") {
+            auto* drop = static_cast<DropNode*>(node);
+            const float scale = z;
+            const float bodyTop = box.top() + kHeaderHeight * scale;
+            const float layersTop = bodyTop + dropBody::layersOffset() * scale;
+            const float layerHeight = dropBody::kLayerHeight * scale;
+
+            int layer = 0;
+            if (screenPosition.y > layersTop && layerHeight > 0.0f) {
+                layer = static_cast<int>((screenPosition.y - layersTop) / layerHeight);
+            } else {
+                for (int i = 0; i < DropNode::kLayers; ++i)
+                    if (!drop->layerSample(i)) { layer = i; break; }
+            }
+
+            return drop->loadLayer(clampValue(layer, 0, DropNode::kLayers - 1),
+                                   utf8Path, nullptr);
         }
 
         // A stem player has eight slots stacked down its body, so which one was
         // hit has to come from where in the node the pointer landed. The strips
         // are the bottom of the body, laid out by drawStemPlayerBody.
         if (node->typeName() == "stem.player") {
-            auto* player = static_cast<StemPlayerNode*>(node.get());
+            auto* player = static_cast<StemPlayerNode*>(node);
 
+            // The strips' position comes from the same constants that lay them
+            // out, rather than a second copy of the arithmetic. The header is
+            // kHeaderHeight in design units for the same reason everything else
+            // here is: the theme's metrics already carry the display scale, and
+            // the canvas multiplies by viewScale() on the way out.
             const float scale = z;
-            const float bodyTop = box.top() + theme().nodeHeaderHeight * scale;
-            // Section grid, launch row, tempo row and the gaps above the
-            // strips. Kept in one expression so it is obvious this has to move
-            // whenever drawStemPlayerBody's layout does.
-            const float stripsTop = bodyTop + (76.0f + 4.0f + 18.0f + 3.0f + 18.0f + 4.0f) * scale;
-            const float stripHeight = 17.0f * scale;
+            const float bodyTop = box.top() + kHeaderHeight * scale;
+            const float stripsTop = bodyTop + stemBody::stripsOffset() * scale;
+            const float stripHeight = stemBody::kStripHeight * scale;
 
             int slot = 0;
             if (screenPosition.y > stripsTop && stripHeight > 0.0f)
@@ -730,7 +813,7 @@ bool PatcherView::handleFileDrop(const std::string& utf8Path, Vec2 screenPositio
         }
 
         if (node->typeName() == "build") {
-            auto* build = static_cast<BuildNode*>(node.get());
+            auto* build = static_cast<BuildNode*>(node);
             return build->loadRiser(utf8Path, nullptr);
         }
     }
@@ -848,7 +931,14 @@ void PatcherView::drawCables(Ui& ui, const Rect& bounds) {
     }
 }
 
-void PatcherView::drawNode(Ui& ui, Node& node, const Rect& bounds) {
+void PatcherView::drawNode(Ui& ui, Node& node, const Rect& bounds, bool interactive) {
+    // Everything below draws the same either way; only the claiming changes.
+    if (!interactive) ui.pushInert();
+    struct InertGuard {
+        Ui& ui; bool on;
+        ~InertGuard() { if (!on) ui.popInert(); }
+    } guard{ ui, interactive };
+
     const float z = viewScale();
     const Theme& t = theme();
     DrawList& list = ui.draw();
@@ -1076,12 +1166,6 @@ void PatcherView::drawSamplePlayerBody(Ui& ui, Node& node, const Rect& body) {
                             "drop an audio file here", DrawList::Align::Centre);
     }
 
-    // Dropping a file straight onto the strip is the obvious gesture.
-    if (ui.acceptDrop(waveform, "file")) {
-        std::string error;
-        player.loadFile(ui.dragPayload(), &error);
-    }
-
     area.removeFromTop(s * 4.0f);
 
     // -- transport row -----------------------------------------------------
@@ -1291,7 +1375,7 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
     const int active = stems.activeSection();
     const int pending = stems.pendingSection();
 
-    Rect sectionArea = area.removeFromTop(s * 76.0f);
+    Rect sectionArea = area.removeFromTop(s * stemBody::kSections);
     list.addRectFilled(sectionArea, t.canvas.brightened(1.08f), t.cornerRadius);
 
     if (count == 0) {
@@ -1352,22 +1436,22 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
         }
     }
 
-    area.removeFromTop(s * 4.0f);
+    area.removeFromTop(s * stemBody::kAfterSections);
 
     // -- launch and divide -------------------------------------------------
-    Rect controlRow = area.removeFromTop(s * 18.0f);
+    Rect controlRow = area.removeFromTop(s * stemBody::kControlRow);
     ui.parameterCycle(controlRow.removeFromLeft(controlRow.width * 0.55f),
                       node.parameter(node.indexOfParameter("launch")), t.accent);
     controlRow.removeFromLeft(s * 4.0f);
     ui.parameterCycle(controlRow, node.parameter(node.indexOfParameter("divide")), t.control);
 
-    area.removeFromTop(s * 3.0f);
+    area.removeFromTop(s * stemBody::kAfterControls);
 
     // -- tempo -------------------------------------------------------------
     // 20 rather than 18: a button's label needs its font height plus the
     // padding the style puts around it, and at 18 the toggle lost the tail of
     // its g.
-    Rect tempoRow = area.removeFromTop(s * 20.0f);
+    Rect tempoRow = area.removeFromTop(s * stemBody::kTempoRow);
 
     // The routing toggle *leads* the row. Trailing it put it at the extreme
     // right edge of the widest node in the application, which on any ordinary
@@ -1428,7 +1512,7 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
         ui.setTooltip("Set the project tempo from this stem player");
 
 
-    area.removeFromTop(s * 4.0f);
+    area.removeFromTop(s * stemBody::kAfterTempo);
 
     // -- stem strips -------------------------------------------------------
     // -- routing matrix ----------------------------------------------------
@@ -1456,8 +1540,8 @@ void PatcherView::drawStemPlayerBody(Ui& ui, Node& node, const Rect& body) {
         ? static_cast<double>(std::max(1, engine_->transport().snapshot().timeSigNumerator)) : 4.0;
 
     for (int slot = 0; slot < kMaxStems; ++slot) {
-        if (area.height < s * 24.0f) break;
-        Rect row = area.removeFromTop(s * 23.0f);
+        if (area.height < s * (stemBody::kStripHeight + 1.0f)) break;
+        Rect row = area.removeFromTop(s * stemBody::kStripHeight);
 
         const bool loaded = stems.stemLoaded(slot);
 
@@ -2047,7 +2131,7 @@ void PatcherView::drawDropBody(Ui& ui, Node& node, const Rect& body) {
     // A drop node wired to a build is fired by the build; this button is for
     // hearing the impact while it is being balanced, which is the only time
     // anyone wants to trigger one by hand.
-    Rect fireArea = area.removeFromTop(s * 30.0f).deflated(s * 2.0f);
+    Rect fireArea = area.removeFromTop(s * dropBody::kFireRow).deflated(s * 2.0f);
 
     bool fireHovered = false, fireHeld = false;
     const UiId fireId = ui.idFrom(&node, 700);
@@ -2064,7 +2148,7 @@ void PatcherView::drawDropBody(Ui& ui, Node& node, const Rect& body) {
                         "fire", DrawList::Align::Centre);
     if (fireHovered) ui.setTooltip("Fire every layer now. The build fires it in performance.");
 
-    area.removeFromTop(s * 5.0f);
+    area.removeFromTop(s * dropBody::kAfterFire);
 
     // -- layers ------------------------------------------------------------
     for (int i = 0; i < DropNode::kLayers; ++i) {
@@ -2073,12 +2157,8 @@ void PatcherView::drawDropBody(Ui& ui, Node& node, const Rect& body) {
         // Tall enough for a button: a control's label needs its font height
         // plus the padding the button style puts around it, and 13 units of row
         // clipped the mute's "m" to a bare box.
-        Rect row = area.removeFromTop(s * 40.0f);
+        Rect row = area.removeFromTop(s * dropBody::kLayerHeight);
         list.addRectFilled(row, t.panelSunken, 2.0f);
-
-        // Dropping a file on a layer is the obvious gesture, and it is how the
-        // three get filled in: three drags, no dialogs.
-        if (ui.acceptDrop(row, "file")) drop.loadLayer(i, ui.dragPayload(), nullptr);
 
         Rect inner = row.deflated(s * 3.0f);
         Rect nameRow = inner.removeFromTop(s * 19.0f);
@@ -2473,6 +2553,125 @@ void PatcherView::handleShortcuts(Ui& ui, const Rect& bounds) {
     }
 }
 
+void PatcherView::handlePortMenu(Ui& ui, const Rect& bounds) {
+    const UiId menuId = ui.id("patcher.port");
+
+    Rect popupRect;
+    if (!ui.beginPopup(menuId, popupRect)) return;
+
+    const Theme& t = theme();
+    Rect area = popupRect.deflated(t.smallPadding);
+
+    auto* stems = engine_ ? dynamic_cast<StemPlayerNode*>(engine_->graph().node(portMenuNode_))
+                          : nullptr;
+    if (!stems || portMenuSlot_ < 0) {
+        ui.endPopup();
+        ui.closePopup();
+        return;
+    }
+
+    const int slot = portMenuSlot_;
+    const std::size_t rackSize = downstreamChain(engine_->graph(), portMenuNode_, slot).size();
+
+    // What this menu is about, said once: which stem, which output, how much is
+    // on it. Without it the actions below could be about any of the eight.
+    char header[96];
+    std::snprintf(header, sizeof(header), "%s  -  out %d  -  %d effect%s",
+                  stems->stemName(slot).c_str(), slot + 1,
+                  static_cast<int>(rackSize), rackSize == 1 ? "" : "s");
+    ui.labelDim(area.removeFromTop(t.scaled(15.0f)), header);
+    ui.separator(area.removeFromTop(t.scaled(7.0f)));
+
+    // -- save --------------------------------------------------------------
+    if (savingChain_) {
+        Rect row = area.removeFromTop(t.rowHeight);
+        const Rect keepArea = row.removeFromRight(t.scaled(42.0f));
+        const bool committed = ui.textField(ui.id("port.name"), row, chainNameBuffer_);
+        if ((ui.button(ui.id("port.keep"), keepArea, "keep", Ui::ButtonStyle::Primary, false,
+                       !chainNameBuffer_.empty())
+             || committed)
+            && !chainNameBuffer_.empty()) {
+            if (onSaveChain) onSaveChain(portMenuNode_, slot, chainNameBuffer_);
+            savingChain_ = false;
+            chainNameBuffer_.clear();
+            ui.closePopup();
+        }
+    } else {
+        if (ui.button(ui.id("port.save"), area.removeFromTop(t.rowHeight), "save chain...",
+                      Ui::ButtonStyle::Ghost, false, rackSize > 0)) {
+            savingChain_ = true;
+            chainNameBuffer_ = stems->stemName(slot);
+            ui.beginTextEdit(ui.id("port.name"), chainNameBuffer_, true);
+        }
+        if (rackSize == 0 && ui.isHot(ui.id("port.save")))
+            ui.setTooltip("Nothing on this stem to save");
+    }
+
+    // -- copy and paste ----------------------------------------------------
+    // Armed here, dropped on another port. A menu cannot show a submenu of the
+    // other seven stems without becoming a maze, and the two-step gesture is
+    // the one the inspector already uses.
+    const bool armed = copySourceNode_ == portMenuNode_ && copySourceSlot_ == slot;
+    const bool pending = copySourceNode_ != kInvalidNode && !armed;
+
+    if (ui.button(ui.id("port.copy"), area.removeFromTop(t.rowHeight),
+                  armed ? "copying - pick a destination"
+                        : pending ? "paste rack here" : "copy this rack",
+                  Ui::ButtonStyle::Ghost, armed,
+                  pending || rackSize > 0)) {
+        if (armed) {
+            copySourceNode_ = kInvalidNode;
+            copySourceSlot_ = -1;
+        } else if (pending) {
+            if (onCopyChain && copySourceNode_ == portMenuNode_) {
+                onCopyChain(portMenuNode_, copySourceSlot_, slot);
+            } else if (copySourceNode_ != portMenuNode_) {
+                // Across two players the ports are not interchangeable, and
+                // copyStemChain only knows one node. Saying so beats copying
+                // the wrong rack.
+                ui.notify("a rack can only be copied within one stem player",
+                          t.danger, 3.5f);
+            }
+            copySourceNode_ = kInvalidNode;
+            copySourceSlot_ = -1;
+            ui.closePopup();
+        } else {
+            copySourceNode_ = portMenuNode_;
+            copySourceSlot_ = slot;
+            ui.closePopup();
+        }
+    }
+
+    if (ui.button(ui.id("port.tidy"), area.removeFromTop(t.rowHeight), "tidy the racks",
+                  Ui::ButtonStyle::Ghost)) {
+        tidyStemChains(portMenuNode_);
+        ui.closePopup();
+    }
+
+    if (ui.button(ui.id("port.inspect"), area.removeFromTop(t.rowHeight),
+                  "open in the inspector", Ui::ButtonStyle::Ghost)) {
+        rackRequest_ = RackRequest{ portMenuNode_, slot };
+        ui.closePopup();
+    }
+
+    // -- load --------------------------------------------------------------
+    const std::vector<std::string> names = chainNames ? chainNames() : std::vector<std::string>{};
+    ui.separator(area.removeFromTop(t.scaled(7.0f)));
+    ui.labelDim(area.removeFromTop(t.scaled(14.0f)),
+                names.empty() ? "no saved chains" : "load");
+
+    for (const std::string& name : names) {
+        if (area.height < t.rowHeight) break;
+        if (ui.button(ui.id("port.load." + name), area.removeFromTop(t.rowHeight), name,
+                      Ui::ButtonStyle::Ghost)) {
+            if (onLoadChain) onLoadChain(portMenuNode_, slot, name);
+            ui.closePopup();
+        }
+    }
+
+    ui.endPopup();
+}
+
 void PatcherView::handleContextMenu(Ui& ui, const Rect& bounds) {
     const InputState& input = ui.input();
     const UiId menuId = ui.id("patcher.context");
@@ -2490,7 +2689,16 @@ void PatcherView::handleContextMenu(Ui& ui, const Rect& bounds) {
             port.valid() && !port.isInput && engine_) {
             if (dynamic_cast<const StemPlayerNode*>(engine_->graph().node(port.node))) {
                 select(port.node, false);
-                rackRequest_ = RackRequest{ port.node, static_cast<int>(port.port) };
+                portMenuNode_ = port.node;
+                portMenuSlot_ = static_cast<int>(port.port);
+                savingChain_ = false;
+                chainNameBuffer_.clear();
+
+                const std::size_t presets = chainNames ? chainNames().size() : 0;
+                const float height = (7.0f + static_cast<float>(std::min<std::size_t>(presets, 8)))
+                                   * theme().rowHeight + 40.0f;
+                ui.openPopup(ui.id("patcher.port"), input.mousePosition,
+                             { 232.0f, std::min(height, 460.0f) });
                 return;
             }
         }
@@ -2571,11 +2779,21 @@ void PatcherView::render(Ui& ui, const Rect& bounds) {
     drawGrid(ui, bounds);
     drawCables(ui, bounds);
 
+    // Only the node on top of the pointer takes input. The others are drawn
+    // exactly as before and ignore the mouse, because a widget belonging to a
+    // node that is *underneath* another one is not the thing being clicked -
+    // and until this was here, it was: the node drawn first won every press its
+    // rectangle covered, whatever was drawn over it. Two nodes overlapping is
+    // ordinary, so this presented as controls that stopped responding once
+    // something was dragged across them, and as drops landing on the wrong
+    // node, both of which change with the zoom.
+    const NodeId interactive = topmostNodeAt(ui.input().mousePosition, bounds);
+
     // Selected nodes draw last so their glow is not painted over.
     for (const auto& node : engine_->graph().nodes())
-        if (!isSelected(node->id())) drawNode(ui, *node, bounds);
+        if (!isSelected(node->id())) drawNode(ui, *node, bounds, node->id() == interactive);
     for (const auto& node : engine_->graph().nodes())
-        if (isSelected(node->id())) drawNode(ui, *node, bounds);
+        if (isSelected(node->id())) drawNode(ui, *node, bounds, node->id() == interactive);
 
     handleInput(ui, bounds);
     handleShortcuts(ui, bounds);
@@ -2592,8 +2810,9 @@ void PatcherView::render(Ui& ui, const Rect& bounds) {
 
     ui.popClip();
 
-    // The menu is drawn outside the clip so it can overhang the canvas.
+    // The menus are drawn outside the clip so they can overhang the canvas.
     handleContextMenu(ui, bounds);
+    handlePortMenu(ui, bounds);
 }
 
 } // namespace acm::ui

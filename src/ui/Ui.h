@@ -165,6 +165,19 @@ public:
     void pushClip(const Rect& rect);
     void popClip();
 
+    // Draw as usual, take no new input.
+    //
+    // Overlapping surfaces need this. Clipping cannot express it - a thing that
+    // is drawn *underneath* another is fully inside its own clip, and hovering
+    // only asks whether the pointer is in the rectangle and inside the clip
+    // stack, never what is on top. So the widgets of a node sitting under
+    // another node went on claiming presses through it, which is invisible
+    // until two things overlap and then looks like the top one being dead.
+    // Anything already holding the pointer keeps it: this stops a new claim,
+    // it does not interrupt a drag in progress.
+    void pushInert();
+    void popInert();
+
     // -- primitives --------------------------------------------------------
     void panel(const Rect& rect, bool raised = false);
     void separator(const Rect& rect, bool vertical = false);
@@ -237,6 +250,17 @@ public:
     // loss; `text` is updated live while editing.
     bool textField(UiId control, const Rect& rect, std::string& text,
                    std::string_view placeholder = {}, bool selectAllOnFocus = false);
+    // Several lines of it: prose, lyrics, a note worth more than one line.
+    //
+    // Enter inserts a newline rather than committing, because a field where
+    // Enter ends the edit cannot hold a second paragraph. The commit therefore
+    // happens on leaving - clicking away, or Ctrl+Enter for anyone who wants a
+    // key - and that is when true comes back. Text wraps to the width given,
+    // scrolls vertically past it, and the caret follows on the wrapped lines
+    // rather than the raw ones, so Up and Down go where they look like they go.
+    bool textArea(UiId control, const Rect& rect, std::string& text,
+                  std::string_view placeholder = {});
+
     bool editingText(UiId control) const noexcept { return editing_ == control; }
     void beginTextEdit(UiId control, const std::string& initial, bool selectAll);
     void cancelTextEdit();
@@ -312,13 +336,34 @@ private:
         std::size_t cursor = 0;
         std::size_t selectionAnchor = 0;
         float scrollX = 0.0f;
+        // Only a text area uses this; a single-line field scrolls sideways.
+        float scrollY = 0.0f;
         bool hasSelection() const { return cursor != selectionAnchor; }
         void clearSelection() { selectionAnchor = cursor; }
+    };
+
+    // One visual line of a wrapped text area: a span of the buffer, and whether
+    // it ended because the author pressed Enter or because it ran out of room.
+    // The distinction matters for the caret - End on a wrapped line goes to the
+    // last character shown, not past the space that was folded away.
+    struct WrappedLine {
+        std::size_t begin = 0;
+        std::size_t end = 0;
+        bool hardBreak = false;
     };
 
     void drawTooltip();
     void drawNotification();
     void updateTextEdit(const Rect& rect, const gfx::Font& font);
+    // The half of updateTextEdit that both the field and the area share:
+    // typed characters, backspace, arrows, selection. `lines` is null for a
+    // single-line field, and is what Up, Down, Home and End navigate when it
+    // is not.
+    void applyTextEditKeys(const gfx::Font& font, const std::vector<WrappedLine>* lines);
+    // Folds text into lines that fit a width. A member only because
+    // WrappedLine is one; it touches no state.
+    static std::vector<WrappedLine> wrapForWidth(const gfx::Font& font, std::string_view text,
+                                                 float maxWidth);
     void deleteSelection();
     void insertText(std::string_view utf8);
 
@@ -335,6 +380,7 @@ private:
     UiId hot_ = kNoId;
     UiId hotNext_ = kNoId;
     UiId active_ = kNoId;
+    int inert_ = 0;
     UiId editing_ = kNoId;
     Cursor cursor_ = Cursor::Arrow;
 
