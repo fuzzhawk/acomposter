@@ -476,7 +476,7 @@ plugin bridge actually work.
 
 ## Status
 
-Version 0.3.0. Everything described above is implemented, and the binaries build
+Version 0.3.1. Everything described above is implemented, and the binaries build
 clean under both MSVC and mingw-w64 with warnings as errors.
 
 The engine, codecs, metasurface, patch format, section launching, colour
